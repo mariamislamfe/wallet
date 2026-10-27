@@ -35,8 +35,11 @@ const SKIP: [RegExp, string][] = [
   [/\b(?:atm|withdraw(?:al|n)?|cash\s+advance)\b|سحب/i, "cash withdrawal"],
 ];
 
-const INCOME = /\b(?:credited|deposit(?:ed)?|received|refund(?:ed)?|reversal|reversed|added\s+to)\b|إيداع|ايداع|استرداد|مرتجع|إضافة|اضافة|وارد|إستلام|استلام/i;
-const EXPENSE = /\b(?:charged|purchase[ds]?|debited|used|paid|payment|spent|transaction)\b|خصم|شراء|مشتريات|سداد|دفع|عملية|حركة/i;
+const TRANSFER = /\b(?:transfer(?:red)?|instapay|ipn)\b|تحويل|انستاباي|إنستاباي/i;
+
+// Incoming is checked first, so "transfer received" / "تحويل وارد" stay income.
+const INCOME = /\b(?:credited|deposit(?:ed)?|received|refund(?:ed)?|reversal|reversed|added\s+to|transfer(?:red)?\s+from)\b|إيداع|ايداع|استرداد|مرتجع|إضافة|اضافة|وارد|إستلام|استلام|استقبال/i;
+const EXPENSE = /\b(?:charged|purchase[ds]?|debited|used|paid|payment|spent|transaction|transfer(?:red)?|sent|instapay|ipn)\b|خصم|شراء|مشتريات|سداد|دفع|عملية|حركة|تحويل|حولت|إرسال|ارسال|انستاباي|إنستاباي/i;
 
 // `\b` only understands ASCII, so Arabic words are delimited by whitespace instead.
 const MERCHANT = [
@@ -93,5 +96,6 @@ export function parseBankSms(raw: string): ParsedSms {
   const type: TransactionType | null = INCOME.test(text) ? "income" : EXPENSE.test(text) ? "expense" : null;
   if (!type) return { ok: false, reason: "not a card transaction" };
 
-  return { ok: true, type, amount, merchant: findMerchant(text) };
+  const merchant = findMerchant(text) ?? (TRANSFER.test(text) ? "InstaPay transfer" : null);
+  return { ok: true, type, amount, merchant };
 }
