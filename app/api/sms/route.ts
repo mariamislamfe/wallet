@@ -44,7 +44,9 @@ export async function POST(request: Request) {
   if (!safeEqual(sha256(given), sha256(token))) {
     const hint = given
       ? `got ${given.length} characters, expected ${token.length}`
-      : "no Authorization header";
+      : request.headers.has("authorization")
+        ? "Authorization header has no token after Bearer"
+        : "no Authorization header";
     return reply(401, { status: "error", message: `Wrong token (${hint}).` });
   }
 
