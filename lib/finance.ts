@@ -45,19 +45,28 @@ export function totalsFor(transactions: Transaction[]): Totals {
   return { income: round2(income), expense: round2(expense), net: round2(income - expense) };
 }
 
+/**
+ * A pocket's state. % pockets keep what's left from month to month, so for them
+ * `allocated`/`spent` run over all time; fixed pockets start over every month.
+ */
 export type BudgetUsage = { budget: Budget; allocated: number; spent: number };
+
+/** The columns that move pocket money: split income and pocket spending. */
+export type PlanRow = Pick<Transaction, "id" | "amount" | "type" | "budget_id" | "in_plan" | "created_at">;
+
+export function isPlanRow(tx: PlanRow): boolean {
+  return tx.type === "income" ? tx.in_plan === true : tx.budget_id !== null;
+}
 
 export type MonthPlan = {
   lines: BudgetUsage[];
-  /** Income the user put into the plan this month; % lines are shares of it. */
+  /** Income the user split by the plan this month. */
   income: number;
-  /** Sum of every line's allocation for the month. */
-  allocated: number;
-  /** Income not assigned to any line (negative when the plan exceeds income). */
+  /** This month's income minus this month's share of every pocket (negative when the plan exceeds it). */
   unallocated: number;
-  /** What's still set aside: each line's allocation minus what was spent from it. */
+  /** What's still set aside across every pocket. */
   reserved: number;
-  /** Spending not tagged with any line. */
+  /** Spending this month not tagged with any pocket. */
   untagged: number;
 };
 
@@ -71,33 +80,51 @@ export function isUndecidedIncome(tx: Transaction): boolean {
   return tx.type === "income" && tx.in_plan === null;
 }
 
-export function planFor(budgets: Budget[], monthTransactions: Transaction[]): MonthPlan {
-  const spentBy = new Map<string, number>();
+/**
+ * The plan as of a month: `monthTransactions` are that month's rows, `history`
+ * the split income and pocket spending from before it (other rows are ignored).
+ */
+export function planFor(budgets: Budget[], monthTransactions: Transaction[], history: PlanRow[] = []): MonthPlan {
+  const known = new Set(budgets.map((b) => b.id));
+  const spentBefore = new Map<string, number>();
+  const spentNow = new Map<string, number>();
+  let incomeBefore = 0;
   let income = 0;
   let untagged = 0;
 
+  for (const tx of history) {
+    if (tx.type === "income") {
+      if (tx.in_plan) incomeBefore += tx.amount;
+    } else if (tx.budget_id && known.has(tx.budget_id)) {
+      spentBefore.set(tx.budget_id, (spentBefore.get(tx.budget_id) ?? 0) + tx.amount);
+    }
+  }
   for (const tx of monthTransactions) {
     if (tx.type === "income") {
       if (tx.in_plan) income += tx.amount;
-    } else if (tx.budget_id && budgets.some((b) => b.id === tx.budget_id)) {
-      spentBy.set(tx.budget_id, (spentBy.get(tx.budget_id) ?? 0) + tx.amount);
+    } else if (tx.budget_id && known.has(tx.budget_id)) {
+      spentNow.set(tx.budget_id, (spentNow.get(tx.budget_id) ?? 0) + tx.amount);
     } else untagged += tx.amount;
   }
 
-  const lines = budgets.map((budget) => ({
-    budget,
-    allocated: allocationFor(budget, income),
-    spent: round2(spentBy.get(budget.id) ?? 0),
-  }));
-  const allocated = round2(lines.reduce((sum, line) => sum + line.allocated, 0));
-  const reserved = round2(lines.reduce((sum, line) => sum + Math.max(0, line.allocated - line.spent), 0));
+  const lines = budgets.map((budget) => {
+    const now = spentNow.get(budget.id) ?? 0;
+    return budget.kind === "percent"
+      ? {
+          budget,
+          allocated: allocationFor(budget, incomeBefore + income),
+          spent: round2((spentBefore.get(budget.id) ?? 0) + now),
+        }
+      : { budget, allocated: budget.value, spent: round2(now) };
+  });
+  const thisMonth = budgets.reduce((sum, budget) => sum + allocationFor(budget, income), 0);
+  const reserved = lines.reduce((sum, line) => sum + Math.max(0, line.allocated - line.spent), 0);
 
   return {
     lines,
     income: round2(income),
-    allocated,
-    unallocated: round2(income - allocated),
-    reserved,
+    unallocated: round2(income - thisMonth),
+    reserved: round2(reserved),
     untagged: round2(untagged),
   };
 }

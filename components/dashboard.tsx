@@ -19,7 +19,7 @@ import { MonthView, type MonthStatus } from "@/components/month-view";
 import { QuickEntry } from "@/components/quick-entry";
 import { Toast, type ToastState } from "@/components/toast";
 import { useMounted } from "@/lib/client";
-import { applyToBalances, mergeTransactions, splitOf } from "@/lib/finance";
+import { applyToBalances, mergeTransactions, splitOf, type PlanRow } from "@/lib/finance";
 import { formatMoney, monthOffsetOf, monthRange } from "@/lib/format";
 import type {
   ActionResult,
@@ -72,6 +72,8 @@ type Props = {
   initialLoadedFrom: string;
   firstTransactionAt: string | null;
   initialBudgets: Budget[];
+  /** Split income and pocket spending from before `initialLoadedFrom`. */
+  planHistory: PlanRow[];
 };
 
 export function Dashboard({
@@ -80,6 +82,7 @@ export function Dashboard({
   initialLoadedFrom,
   firstTransactionAt,
   initialBudgets,
+  planHistory,
 }: Props) {
   // `confirmed` mirrors the database; `view` layers in-flight optimistic changes on top.
   const [confirmed, setConfirmed] = useState<FinanceState>({
@@ -332,6 +335,7 @@ export function Dashboard({
           transactions={view.transactions}
           budgets={budgets}
           balance={view.balances.cash + view.balances.visa}
+          planHistory={planHistory}
           pendingIds={pendingIds}
           onOffsetChange={changeMonth}
           onSaveBudgets={handleSaveBudgets}

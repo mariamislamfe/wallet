@@ -8,7 +8,7 @@ import { Ar } from "@/components/ar";
 import { BudgetPlan } from "@/components/budget-plan";
 import { PendingIncome } from "@/components/pending-income";
 import { cn, useMounted } from "@/lib/client";
-import { isUndecidedIncome, planFor, totalsFor, type Totals } from "@/lib/finance";
+import { isPlanRow, isUndecidedIncome, planFor, totalsFor, type PlanRow, type Totals } from "@/lib/finance";
 import { formatMoney, monthRange, monthTitle } from "@/lib/format";
 import type { Budget, BudgetInput, Transaction } from "@/types/finance";
 
@@ -23,6 +23,8 @@ type Props = {
   budgets: Budget[];
   /** Cash + Visa right now. */
   balance: number;
+  /** Pocket rows from before the loaded window; % pockets carry them forward. */
+  planHistory: PlanRow[];
   pendingIds: ReadonlySet<string>;
   onOffsetChange: (offset: number) => void;
   onRetry: () => void;
@@ -41,6 +43,7 @@ export function MonthView({
   transactions,
   budgets,
   balance,
+  planHistory,
   pendingIds,
   onOffsetChange,
   onRetry,
@@ -62,6 +65,7 @@ export function MonthView({
           transactions={transactions}
           budgets={budgets}
           balance={balance}
+          planHistory={planHistory}
           pendingIds={pendingIds}
           onOffsetChange={onOffsetChange}
           onRetry={onRetry}
@@ -90,6 +94,7 @@ function MonthContent({
   transactions,
   budgets,
   balance,
+  planHistory,
   pendingIds,
   onOffsetChange,
   onRetry,
@@ -105,6 +110,10 @@ function MonthContent({
     return at >= start.getTime() && at < end.getTime();
   });
   const totals = totalsFor(inMonth);
+  // Everything before this month that fills or drains a pocket; loaded rows win over the snapshot.
+  const byId = new Map<string, PlanRow>();
+  for (const row of [...planHistory, ...transactions]) byId.set(row.id, row);
+  const history = [...byId.values()].filter((row) => Date.parse(row.created_at) < start.getTime() && isPlanRow(row));
   const title = monthTitle(offset, now);
   const canGoOlder = offset < maxOffset;
   const canGoNewer = offset > 0;
@@ -169,7 +178,7 @@ function MonthContent({
                 />
               )}
               <BudgetPlan
-                plan={planFor(budgets, inMonth)}
+                plan={planFor(budgets, inMonth, history)}
                 budgets={budgets}
                 balance={offset === 0 ? balance : null}
                 onSave={onSaveBudgets}

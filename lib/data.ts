@@ -2,6 +2,7 @@ import "server-only";
 
 import { getSupabase } from "@/lib/supabase";
 import { EMPTY_BALANCES } from "@/lib/finance";
+import type { PlanRow } from "@/lib/finance";
 import type { Balances, Budget, Transaction, Wallet } from "@/types/finance";
 
 export const TRANSACTION_COLUMNS = "id, amount, type, wallet_type, description, budget_id, source, in_plan, created_at";
@@ -48,6 +49,17 @@ export async function fetchTransactions(from: Date, to?: Date): Promise<Transact
   const { data, error } = await query.order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return data.map(normalizeTransaction);
+}
+
+/** Split income and pocket spending from before `before`: what % pockets carry into it. */
+export async function fetchPlanHistory(before: Date): Promise<PlanRow[]> {
+  const { data, error } = await getSupabase()
+    .from("transactions")
+    .select("id, amount, type, budget_id, in_plan, created_at")
+    .lt("created_at", before.toISOString())
+    .or("in_plan.is.true,budget_id.not.is.null");
+  if (error) throw new Error(error.message);
+  return data.map((row) => ({ ...row, amount: Number(row.amount) }));
 }
 
 /** When the very first transaction was logged — bounds how far back the month picker goes. */

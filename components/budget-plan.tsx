@@ -112,12 +112,7 @@ export function BudgetPlan({ plan, budgets, balance, onSave }: PlanProps) {
 
           <ul className="mt-4 space-y-4">
             {plan.lines.map((line) => (
-              <PlanLine
-                key={line.budget.id}
-                line={line}
-                hasIncome={plan.income > 0}
-                status={statuses?.get(line.budget.id) ?? null}
-              />
+              <PlanLine key={line.budget.id} line={line} status={statuses?.get(line.budget.id) ?? null} />
             ))}
           </ul>
 
@@ -161,17 +156,9 @@ const BILL_LABELS: Record<BillStatus, { text: string; className: string }> = {
   overdue: { text: "Not paid yet", className: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" },
 };
 
-function PlanLine({
-  line,
-  hasIncome,
-  status,
-}: {
-  line: BudgetUsage;
-  hasIncome: boolean;
-  status: BillStatus | null;
-}) {
+function PlanLine({ line, status }: { line: BudgetUsage; status: BillStatus | null }) {
   const { budget, allocated, spent } = line;
-  const waitingForIncome = budget.kind === "percent" && !hasIncome;
+  const waitingForIncome = budget.kind === "percent" && allocated === 0 && spent === 0;
   const share = allocated > 0 ? Math.min(spent / allocated, 1) : spent > 0 ? 1 : 0;
   const left = round2(allocated - spent);
   const bill = status ? BILL_LABELS[status] : null;
@@ -227,8 +214,11 @@ function PlanLine({
         />
       </div>
       <p className="mt-1 text-[11px] text-neutral-400 tabular-nums">
-        {formatMoney(spent)} used of{" "}
-        {waitingForIncome ? `${formatNumber(budget.value)}% of income` : formatMoney(allocated)}
+        {waitingForIncome
+          ? `${formatNumber(budget.value)}% of each income you split`
+          : budget.kind === "percent"
+            ? `${formatMoney(allocated)} put in so far · ${formatMoney(spent)} used`
+            : `${formatMoney(spent)} used of ${formatMoney(allocated)} this month`}
       </p>
     </li>
   );

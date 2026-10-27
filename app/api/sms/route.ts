@@ -2,7 +2,14 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { safeEqual } from "@/lib/auth";
-import { TRANSACTION_COLUMNS, fetchBalances, fetchBudgets, fetchTransactions, normalizeTransaction } from "@/lib/data";
+import {
+  TRANSACTION_COLUMNS,
+  fetchBalances,
+  fetchBudgets,
+  fetchPlanHistory,
+  fetchTransactions,
+  normalizeTransaction,
+} from "@/lib/data";
 import { planFor, round2 } from "@/lib/finance";
 import { formatMoney, formatSignedMoney } from "@/lib/format";
 import { parseBankSms } from "@/lib/sms";
@@ -37,13 +44,16 @@ async function monthLine(tx: Transaction): Promise<string> {
 
   const now = new Date();
   const month = cairoMonth.format(now);
-  const [recent, budgets, balances] = await Promise.all([
-    fetchTransactions(new Date(now.getTime() - 32 * 86_400_000)),
+  const windowStart = new Date(now.getTime() - 32 * 86_400_000);
+  const [recent, older, budgets, balances] = await Promise.all([
+    fetchTransactions(windowStart),
+    fetchPlanHistory(windowStart),
     fetchBudgets(),
     fetchBalances(),
   ]);
   const inMonth = recent.filter((row) => cairoMonth.format(new Date(row.created_at)) === month);
-  const plan = planFor(budgets, inMonth);
+  const before = [...older, ...recent.filter((row) => cairoMonth.format(new Date(row.created_at)) !== month)];
+  const plan = planFor(budgets, inMonth, before);
 
   const line = plan.lines.find((usage) => usage.budget.id === tx.budget_id);
   if (line) {
