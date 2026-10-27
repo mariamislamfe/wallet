@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { safeEqual } from "@/lib/auth";
-import { TRANSACTION_COLUMNS, normalizeTransaction } from "@/lib/data";
-import { formatSignedMoney } from "@/lib/format";
+import { TRANSACTION_COLUMNS, fetchBudgets, fetchTransactions, normalizeTransaction } from "@/lib/data";
+import { planFor, totalsFor } from "@/lib/finance";
+import { formatMoney, formatSignedMoney } from "@/lib/format";
 import { parseBankSms } from "@/lib/sms";
 import { getSupabase } from "@/lib/supabase";
+import type { Transaction } from "@/types/finance";
 
 // Receives bank SMS forwarded by an iPhone Shortcuts automation and records
 // them on the Visa wallet. Authenticated by its own bearer token (the
@@ -15,12 +17,39 @@ export const dynamic = "force-dynamic";
 
 const MAX_LENGTH = 1000;
 
+// Months for the notification follow the phone's clock, which is in Egypt.
+const cairoMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit" });
+
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
 function reply(status: number, body: { status: string; message: string; [key: string]: unknown }) {
   return NextResponse.json(body, { status });
+}
+
+/** Second notification line: what's left on the tagged budget line, else the month's running total. */
+async function monthLine(tx: Transaction): Promise<string> {
+  const now = new Date();
+  const month = cairoMonth.format(now);
+  const [recent, budgets] = await Promise.all([
+    fetchTransactions(new Date(now.getTime() - 32 * 86_400_000)),
+    fetchBudgets(),
+  ]);
+  const inMonth = recent.filter((row) => cairoMonth.format(new Date(row.created_at)) === month);
+
+  const line = planFor(budgets, inMonth).lines.find((usage) => usage.budget.id === tx.budget_id);
+  if (line) {
+    const left = line.allocated - line.spent;
+    return left >= 0
+      ? `${line.budget.name}: فاضل ${formatMoney(left)} من ${formatMoney(line.allocated)}`
+      : `${line.budget.name}: زيادة ${formatMoney(-left)} عن الميزانية`;
+  }
+
+  const totals = totalsFor(inMonth);
+  return tx.type === "expense"
+    ? `المصروف الشهر ده: ${formatMoney(totals.expense)}`
+    : `الدخل الشهر ده: ${formatMoney(totals.income)}`;
 }
 
 async function readText(request: Request): Promise<string> {
@@ -101,9 +130,16 @@ export async function POST(request: Request) {
     if (!data) return reply(200, { status: "duplicate", message: "Already recorded." });
 
     const tx = normalizeTransaction(data);
+    const message = `${formatSignedMoney(tx)} · ${tx.description}`;
+    // The summary line is a nicety; never fail a recorded SMS over it.
+    const summary = await monthLine(tx).catch((error: unknown) => {
+      console.error("[wallet] sms summary failed:", error);
+      return null;
+    });
     return reply(201, {
       status: "recorded",
-      message: `${formatSignedMoney(tx)} · ${tx.description}`,
+      message,
+      notify: summary ? `${message}\n${summary}` : message,
       transaction: tx,
     });
   } catch (error) {
