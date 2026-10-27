@@ -36,9 +36,10 @@ export async function POST(request: Request) {
   const token = process.env.SMS_INGEST_TOKEN?.trim();
   if (!token) return reply(503, { status: "error", message: "SMS import is off: set SMS_INGEST_TOKEN." });
 
-  // Tokens pasted on a phone often pick up invisible direction marks or quotes; ignore them.
+  // Tokens pasted on a phone often pick up invisible direction marks, quotes or spaces.
+  // The token is base64url, so anything outside that alphabet is noise.
   const given = (request.headers.get("authorization") ?? "")
-    .replace(/[​-‏‪-‮⁦-⁩﻿"'“”‘’\s]/g, "")
+    .replace(/[^A-Za-z0-9_-]/g, "")
     .replace(/^(?:Bearer)+/i, "");
   if (!safeEqual(sha256(given), sha256(token))) {
     const hint = given
