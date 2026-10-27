@@ -36,9 +36,15 @@ export async function POST(request: Request) {
   const token = process.env.SMS_INGEST_TOKEN?.trim();
   if (!token) return reply(503, { status: "error", message: "SMS import is off: set SMS_INGEST_TOKEN." });
 
-  const given = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  // Tokens pasted on a phone often pick up invisible direction marks or quotes; ignore them.
+  const given = (request.headers.get("authorization") ?? "")
+    .replace(/[​-‏‪-‮⁦-⁩﻿"'“”‘’\s]/g, "")
+    .replace(/^(?:Bearer)+/i, "");
   if (!safeEqual(sha256(given), sha256(token))) {
-    return reply(401, { status: "error", message: "Wrong token." });
+    const hint = given
+      ? `got ${given.length} characters, expected ${token.length}`
+      : "no Authorization header";
+    return reply(401, { status: "error", message: `Wrong token (${hint}).` });
   }
 
   let text: string;
