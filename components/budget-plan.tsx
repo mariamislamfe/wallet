@@ -155,12 +155,68 @@ const BILL_LABELS: Record<BillStatus, { text: string; className: string }> = {
   overdue: { text: "Not paid yet", className: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" },
 };
 
+function BillPill({ status }: { status: BillStatus }) {
+  const bill = BILL_LABELS[status];
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-full px-2 text-[11px] leading-[18px] font-medium",
+        bill.className,
+      )}
+    >
+      {status === "paid" && <Check className="size-3" strokeWidth={2.25} />}
+      {bill.text}
+    </span>
+  );
+}
+
+/** This month's pockets with a pay day, soonest first, coloured by whether the money is there. */
+export function BillsCard({ plan, balance, onOpen }: { plan: MonthPlan; balance: number; onOpen: () => void }) {
+  const statuses = billStatuses(plan, balance, new Date().getDate());
+  const bills = plan.lines
+    .filter((line) => line.budget.due_day !== null)
+    .sort((a, b) => a.budget.due_day! - b.budget.due_day!);
+  if (bills.length === 0) return null;
+
+  return (
+    <div className="mt-3 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[13px] font-medium text-neutral-500">
+          Monthly bills <span aria-hidden className="mx-1 text-neutral-300 dark:text-neutral-600">·</span>
+          <Ar className="font-normal text-neutral-400">المدفوعات الشهرية</Ar>
+        </p>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="-me-2 h-8 rounded-full px-3 text-[13px] font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+        >
+          Pockets
+        </button>
+      </div>
+      <ul className="mt-2 divide-y divide-neutral-100 dark:divide-neutral-800">
+        {bills.map((line) => (
+          <li key={line.budget.id} className="flex items-center gap-3 py-2.5 last:pb-0">
+            <span className="flex size-9 shrink-0 flex-col items-center justify-center rounded-lg bg-neutral-100 leading-none dark:bg-neutral-800">
+              <span className="text-[9px] font-medium text-neutral-500 uppercase">Day</span>
+              <span className="text-sm font-semibold tabular-nums">{line.budget.due_day}</span>
+            </span>
+            <span className="min-w-0 flex-1">
+              <bdi className="block truncate text-sm font-medium">{line.budget.name}</bdi>
+              <span className="block text-xs text-neutral-500 tabular-nums">{formatMoney(line.allocated)}</span>
+            </span>
+            <BillPill status={statuses.get(line.budget.id)!} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function PlanLine({ line, status }: { line: BudgetUsage; status: BillStatus | null }) {
   const { budget, allocated, spent } = line;
   const waitingForIncome = budget.kind === "percent" && allocated === 0 && spent === 0;
   const share = allocated > 0 ? Math.min(spent / allocated, 1) : spent > 0 ? 1 : 0;
   const left = round2(allocated - spent);
-  const bill = status ? BILL_LABELS[status] : null;
 
   return (
     <li>
@@ -176,16 +232,8 @@ function PlanLine({ line, status }: { line: BudgetUsage; status: BillStatus | nu
                 <CalendarDays className="size-3" strokeWidth={1.75} />
                 Day {budget.due_day}
               </span>
-              {bill && (
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-full px-2 leading-[18px] font-medium",
-                    bill.className,
-                  )}
-                >
-                  {status === "paid" && <Check className="size-3" strokeWidth={2.25} />}
-                  {bill.text}
-                </span>
+              {status && (
+                <BillPill status={status} />
               )}
             </p>
           )}

@@ -7,27 +7,51 @@ import { Ar } from "@/components/ar";
 import { AnimatedAmount } from "@/components/animated-amount";
 import { cn } from "@/lib/client";
 import { WALLET_LABELS, round2, sanitizeAmountInput } from "@/lib/finance";
+import { formatMoney } from "@/lib/format";
 import { WALLET_TYPES, type Balances, type WalletType } from "@/types/finance";
 
 type Props = {
   balances: Balances;
+  /** Money still set aside in pockets; null until the plan is known (client-side). */
+  reserved: number | null;
   showSetupHint: boolean;
   onSetBalance: (wallet: WalletType, balance: number) => void;
 };
 
-export function BalanceOverview({ balances, showSetupHint, onSetBalance }: Props) {
-  const net = round2(balances.cash + balances.visa);
+export function BalanceOverview({ balances, reserved, showSetupHint, onSetBalance }: Props) {
+  const total = round2(balances.cash + balances.visa);
+  const free = reserved === null ? null : round2(total - reserved);
 
   return (
     <section aria-label="Balances">
       <p className="text-[13px] font-medium text-neutral-500">
-        Net balance <span aria-hidden className="mx-1 text-neutral-300 dark:text-neutral-600">·</span>
-        <Ar className="font-normal text-neutral-400">إجمالي الرصيد</Ar>
+        Can be used <span aria-hidden className="mx-1 text-neutral-300 dark:text-neutral-600">·</span>
+        <Ar className="font-normal text-neutral-400">تقدري تصرفي</Ar>
       </p>
-      <AnimatedAmount
-        value={net}
-        className="mt-1 block truncate text-[clamp(2rem,10vw,2.5rem)] leading-none font-semibold tracking-[-0.035em] tabular-nums sm:text-5xl"
-      />
+      {free === null ? (
+        <div className="mt-1 h-10 w-48 rounded-lg bg-neutral-100 sm:h-12 dark:bg-neutral-800" />
+      ) : (
+        <AnimatedAmount
+          value={Math.max(free, 0)}
+          className={cn(
+            "mt-1 block truncate text-[clamp(2rem,10vw,2.5rem)] leading-none font-semibold tracking-[-0.035em] tabular-nums sm:text-5xl",
+            free < 0 && "text-red-600 dark:text-red-400",
+          )}
+        />
+      )}
+      <p className="mt-2 h-4 text-xs text-neutral-500 tabular-nums">
+        {free !== null && free < 0 ? (
+          <span className="text-red-600 dark:text-red-400">
+            {formatMoney(-free)} into money set aside <Ar className="ms-1">· دخلتي على فلوس الجيوب</Ar>
+          </span>
+        ) : reserved ? (
+          <>
+            Total {formatMoney(total)} · {formatMoney(reserved)} set aside in pockets
+          </>
+        ) : (
+          <>Total {formatMoney(total)}</>
+        )}
+      </p>
 
       <div className="mt-6 grid grid-cols-2 gap-3">
         {WALLET_TYPES.map((wallet) => (

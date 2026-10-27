@@ -16,12 +16,33 @@ import {
   setWalletBalance,
 } from "@/app/actions";
 import { Ar } from "@/components/ar";
+import { ActivityFeed, FeedSkeleton } from "@/components/activity-feed";
 import { BalanceOverview } from "@/components/balance-overview";
-import { MonthView, type MonthStatus } from "@/components/month-view";
+import { BillsCard, BudgetPlan } from "@/components/budget-plan";
+import {
+  EmptyState,
+  MonthPage,
+  MonthSummary,
+  SummarySkeleton,
+  type MonthStatus,
+} from "@/components/month-view";
+import { PendingIncome } from "@/components/pending-income";
+import { ProjectsCard } from "@/components/projects";
 import { QuickEntry } from "@/components/quick-entry";
+import { TABS, TabBar, type Tab } from "@/components/tab-bar";
 import { Toast, type ToastState } from "@/components/toast";
 import { useMounted } from "@/lib/client";
-import { applyToBalances, mergeTransactions, splitOf, type PlanRow } from "@/lib/finance";
+import {
+  applyToBalances,
+  isPlanRow,
+  isUndecidedIncome,
+  mergeTransactions,
+  planFor,
+  projectTotals,
+  splitOf,
+  totalsFor,
+  type PlanRow,
+} from "@/lib/finance";
 import { formatMoney, monthOffsetOf, monthRange } from "@/lib/format";
 import type {
   ActionResult,
@@ -36,6 +57,10 @@ import type {
 } from "@/types/finance";
 
 type FinanceState = { balances: Balances; transactions: Transaction[] };
+
+/** Rows shown under "Recent" on Home. */
+const RECENT_COUNT = 5;
+const POCKETS_DOT: ReadonlySet<Tab> = new Set(["pockets"]);
 
 type OptimisticAction =
   | { kind: "add"; transaction: Transaction }
@@ -106,6 +131,25 @@ export function Dashboard({
   const [loadedFrom, setLoadedFrom] = useState(() => Date.parse(initialLoadedFrom));
   const [loadFailed, setLoadFailed] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [tab, setTab] = useState<Tab>("home");
+
+  // The open tab lives in the URL hash so a reload or the back button keeps it.
+  useEffect(() => {
+    const fromHash = () => {
+      const hash = window.location.hash.slice(1);
+      setTab((TABS as readonly string[]).includes(hash) ? (hash as Tab) : "home");
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, []);
+
+  const openTab = useCallback((next: Tab) => {
+    setTab(next);
+    const url = next === "home" ? window.location.pathname + window.location.search : `#${next}`;
+    window.history.replaceState(null, "", url);
+    window.scrollTo({ top: 0 });
+  }, []);
 
   // Before mount the month boundaries are unknown (timezone), so nothing is fetched.
   const monthStart = mounted ? monthRange(monthOffset).start.getTime() : Number.POSITIVE_INFINITY;
@@ -347,11 +391,60 @@ export function Dashboard({
 
   const isFresh =
     view.transactions.length === 0 && view.balances.cash === 0 && view.balances.visa === 0;
+  const balance = view.balances.cash + view.balances.visa;
+
+  // Month slices need the viewer's timezone, so they exist only after mount.
+  const months = useMemo(() => {
+    if (!mounted) return null;
+    // Loaded rows win over the server's snapshot of older pocket/project rows.
+    const byId = new Map<string, PlanRow>();
+    for (const row of [...planHistory, ...view.transactions]) byId.set(row.id, row);
+    const known = [...byId.values()];
+
+    const slice = (offset: number) => {
+      const { start, end } = monthRange(offset);
+      const from = start.getTime();
+      const to = end.getTime();
+      return {
+        rows: view.transactions.filter((tx) => {
+          const at = Date.parse(tx.created_at);
+          return at >= from && at < to;
+        }),
+        history: known.filter((row) => Date.parse(row.created_at) < from && isPlanRow(row)),
+      };
+    };
+    const current = slice(0);
+    return {
+      current,
+      selected: monthOffset === 0 ? current : slice(monthOffset),
+      projectRows: known.filter((row) => row.project_id !== null),
+    };
+  }, [mounted, planHistory, view.transactions, monthOffset]);
+
+  const currentPlan = months ? planFor(budgets, months.current.rows, months.current.history) : null;
+  const undecided = view.transactions.filter(isUndecidedIncome);
+
+  const feedProps = {
+    budgets,
+    projects,
+    pendingIds,
+    onDelete: handleDelete,
+    onSetBudget: handleSetBudget,
+    onSetInPlan: handleSetInPlan,
+    onSetProject: handleSetProject,
+  };
+  const monthPageProps = {
+    offset: monthOffset,
+    maxOffset: oldestOffset,
+    status: monthStatus,
+    onOffsetChange: changeMonth,
+    onRetry: () => setRetryCount((count) => count + 1),
+  };
 
   return (
     <>
-      <main className="mx-auto w-full max-w-xl px-4 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+6rem)] sm:pt-14">
-        <header className="mb-10 flex items-center gap-2.5">
+      <main className="mx-auto w-full max-w-xl px-4 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+7rem)] sm:pt-14">
+        <header className="mb-8 flex items-center gap-2.5">
           <span className="flex size-7 items-center justify-center rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-neutral-900">
             <WalletMinimal className="size-3.5" strokeWidth={1.75} />
           </span>
@@ -359,41 +452,126 @@ export function Dashboard({
           <Ar className="text-sm text-neutral-400">محفظتي</Ar>
         </header>
 
-        <BalanceOverview
-          balances={view.balances}
-          showSetupHint={isFresh}
-          onSetBalance={handleSetBalance}
-        />
+        {tab === "home" && (
+          <>
+            <BalanceOverview
+              balances={view.balances}
+              reserved={currentPlan?.reserved ?? null}
+              showSetupHint={isFresh}
+              onSetBalance={handleSetBalance}
+            />
 
-        <QuickEntry
-          balances={view.balances}
-          transactions={view.transactions}
-          budgets={budgets}
-          projects={projects}
-          onSubmit={handleAdd}
-        />
+            <QuickEntry
+              balances={view.balances}
+              transactions={view.transactions}
+              budgets={budgets}
+              projects={projects}
+              onSubmit={handleAdd}
+            />
 
-        <MonthView
-          offset={monthOffset}
-          maxOffset={oldestOffset}
-          status={monthStatus}
-          transactions={view.transactions}
-          budgets={budgets}
-          projects={projects}
-          balance={view.balances.cash + view.balances.visa}
-          planHistory={planHistory}
-          pendingIds={pendingIds}
-          onOffsetChange={changeMonth}
-          onSaveBudgets={handleSaveBudgets}
-          onSetBudget={handleSetBudget}
-          onSetInPlan={handleSetInPlan}
-          onSetProject={handleSetProject}
-          onSaveProjects={handleSaveProjects}
-          onRetry={() => setRetryCount((count) => count + 1)}
-          onDelete={handleDelete}
-        />
+            {budgets.length > 0 && (
+              <PendingIncome
+                transactions={undecided}
+                budgets={budgets}
+                pendingIds={pendingIds}
+                onDecide={handleSetInPlan}
+              />
+            )}
+
+            {currentPlan && <BillsCard plan={currentPlan} balance={balance} onOpen={() => openTab("pockets")} />}
+
+            <section aria-labelledby="recent-heading" className="mt-10">
+              <div className="mb-2 flex items-center justify-between gap-3 px-1">
+                <h2 id="recent-heading" className="text-[13px] font-medium text-neutral-500">
+                  Recent <span aria-hidden className="mx-1 text-neutral-300 dark:text-neutral-600">·</span>
+                  <Ar className="font-normal text-neutral-400">آخر الحركات</Ar>
+                </h2>
+                {view.transactions.length > RECENT_COUNT && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      changeMonth(0);
+                      openTab("activity");
+                    }}
+                    className="-me-2 h-8 rounded-full px-3 text-[13px] font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+                  >
+                    See all
+                  </button>
+                )}
+              </div>
+              {!mounted ? (
+                <FeedSkeleton />
+              ) : view.transactions.length === 0 ? (
+                <EmptyState en="Nothing logged yet" ar="لسه مفيش حركات" />
+              ) : (
+                <ActivityFeed transactions={view.transactions.slice(0, RECENT_COUNT)} {...feedProps} />
+              )}
+            </section>
+          </>
+        )}
+
+        {tab === "activity" && (
+          <MonthPage
+            {...monthPageProps}
+            skeleton={
+              <>
+                <SummarySkeleton />
+                <div className="mt-8">
+                  <FeedSkeleton />
+                </div>
+              </>
+            }
+          >
+            {months && (
+              <>
+                <MonthSummary totals={totalsFor(months.selected.rows)} />
+                <div className="mt-8">
+                  {months.selected.rows.length === 0 ? (
+                    <EmptyState
+                      en={monthOffset === 0 ? "Nothing logged this month yet" : "Nothing logged this month"}
+                      ar="مفيش حركات في الشهر ده"
+                    />
+                  ) : (
+                    <ActivityFeed transactions={months.selected.rows} {...feedProps} />
+                  )}
+                </div>
+              </>
+            )}
+          </MonthPage>
+        )}
+
+        {tab === "pockets" && (
+          <section aria-label="Pockets">
+            {budgets.length > 0 && (
+              <PendingIncome
+                transactions={undecided}
+                budgets={budgets}
+                pendingIds={pendingIds}
+                onDecide={handleSetInPlan}
+              />
+            )}
+            {currentPlan ? (
+              <BudgetPlan plan={currentPlan} budgets={budgets} balance={balance} onSave={handleSaveBudgets} />
+            ) : (
+              <SummarySkeleton />
+            )}
+          </section>
+        )}
+
+        {tab === "projects" && (
+          <MonthPage {...monthPageProps} skeleton={<SummarySkeleton />}>
+            {months && (
+              <ProjectsCard
+                totals={projectTotals(projects, months.selected.rows, months.projectRows)}
+                projects={projects}
+                onSave={handleSaveProjects}
+              />
+            )}
+          </MonthPage>
+        )}
       </main>
 
+      <TabBar tab={tab} onChange={openTab} dots={undecided.length > 0 && budgets.length > 0 ? POCKETS_DOT : undefined} />
       <Toast toast={toast} onDismiss={dismissToast} onUndo={handleRestore} />
     </>
   );

@@ -3,23 +3,10 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, RotateCw } from "lucide-react";
 
-import { ActivityFeed, FeedSkeleton } from "@/components/activity-feed";
 import { Ar } from "@/components/ar";
-import { BudgetPlan } from "@/components/budget-plan";
-import { PendingIncome } from "@/components/pending-income";
-import { ProjectsCard } from "@/components/projects";
 import { cn, useMounted } from "@/lib/client";
-import {
-  isPlanRow,
-  isUndecidedIncome,
-  planFor,
-  projectTotals,
-  totalsFor,
-  type PlanRow,
-  type Totals,
-} from "@/lib/finance";
-import { formatMoney, monthRange, monthTitle } from "@/lib/format";
-import type { Budget, BudgetInput, Project, ProjectInput, Transaction } from "@/types/finance";
+import type { Totals } from "@/lib/finance";
+import { formatMoney, monthTitle } from "@/lib/format";
 
 export type MonthStatus = "ready" | "loading" | "error";
 
@@ -28,120 +15,34 @@ type Props = {
   /** Oldest month that can be opened, as an offset. */
   maxOffset: number;
   status: MonthStatus;
-  transactions: Transaction[];
-  budgets: Budget[];
-  projects: Project[];
-  /** Cash + Visa right now. */
-  balance: number;
-  /** Pocket rows from before the loaded window; % pockets carry them forward. */
-  planHistory: PlanRow[];
-  pendingIds: ReadonlySet<string>;
   onOffsetChange: (offset: number) => void;
   onRetry: () => void;
-  onDelete: (tx: Transaction) => void;
-  onSetBudget: (tx: Transaction, budgetId: string | null) => void;
-  onSetInPlan: (tx: Transaction, inPlan: boolean | null) => void;
-  onSaveBudgets: (lines: BudgetInput[]) => Promise<string | null>;
-  onSetProject: (tx: Transaction, projectId: string | null) => void;
-  onSaveProjects: (projects: ProjectInput[]) => Promise<string | null>;
+  /** Shown once the month's rows are loaded. */
+  children: React.ReactNode;
+  /** Shown while the month loads (and before mount). */
+  skeleton: React.ReactNode;
 };
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
-export function MonthView({
-  offset,
-  maxOffset,
-  status,
-  transactions,
-  budgets,
-  projects,
-  balance,
-  planHistory,
-  pendingIds,
-  onOffsetChange,
-  onRetry,
-  onDelete,
-  onSetBudget,
-  onSetInPlan,
-  onSaveBudgets,
-  onSetProject,
-  onSaveProjects,
-}: Props) {
+/** A page scoped to one month: the month switcher, then its content. */
+export function MonthPage({ offset, maxOffset, status, onOffsetChange, onRetry, children, skeleton }: Props) {
   // Month boundaries depend on the viewer's timezone, so render them client-side only.
   const mounted = useMounted();
 
-  return (
-    <section aria-labelledby="month-heading" className="mt-12">
-      {mounted ? (
-        <MonthContent
-          offset={offset}
-          maxOffset={maxOffset}
-          status={status}
-          transactions={transactions}
-          budgets={budgets}
-          projects={projects}
-          balance={balance}
-          planHistory={planHistory}
-          pendingIds={pendingIds}
-          onOffsetChange={onOffsetChange}
-          onRetry={onRetry}
-          onDelete={onDelete}
-          onSetBudget={onSetBudget}
-          onSetInPlan={onSetInPlan}
-          onSaveBudgets={onSaveBudgets}
-          onSetProject={onSetProject}
-          onSaveProjects={onSaveProjects}
-        />
-      ) : (
-        <>
-          <div className="h-12" />
-          <SummarySkeleton />
-          <div className="mt-6">
-            <FeedSkeleton />
-          </div>
-        </>
-      )}
-    </section>
-  );
-}
+  if (!mounted) {
+    return (
+      <section>
+        <div className="h-12" />
+        {skeleton}
+      </section>
+    );
+  }
 
-function MonthContent({
-  offset,
-  maxOffset,
-  status,
-  transactions,
-  budgets,
-  projects,
-  balance,
-  planHistory,
-  pendingIds,
-  onOffsetChange,
-  onRetry,
-  onDelete,
-  onSetBudget,
-  onSetInPlan,
-  onSaveBudgets,
-  onSetProject,
-  onSaveProjects,
-}: Props) {
-  const now = new Date();
-  const { start, end } = monthRange(offset, now);
-  const inMonth = transactions.filter((tx) => {
-    const at = Date.parse(tx.created_at);
-    return at >= start.getTime() && at < end.getTime();
-  });
-  const totals = totalsFor(inMonth);
-  // Everything before this month that fills or drains a pocket; loaded rows win over the snapshot.
-  const byId = new Map<string, PlanRow>();
-  for (const row of [...planHistory, ...transactions]) byId.set(row.id, row);
-  const history = [...byId.values()].filter((row) => Date.parse(row.created_at) < start.getTime() && isPlanRow(row));
-  const projectRows = [...byId.values()].filter((row) => row.project_id !== null);
-  const title = monthTitle(offset, now);
-  const canGoOlder = offset < maxOffset;
-  const canGoNewer = offset > 0;
+  const title = monthTitle(offset, new Date());
 
   return (
-    <>
+    <section aria-labelledby="month-heading">
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1 px-1">
           <h2 id="month-heading" className="flex items-baseline gap-x-2 text-xl font-semibold tracking-tight">
@@ -171,10 +72,10 @@ function MonthContent({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          <NavButton label="Previous month" disabled={!canGoOlder} onClick={() => onOffsetChange(offset + 1)}>
+          <NavButton label="Previous month" disabled={offset >= maxOffset} onClick={() => onOffsetChange(offset + 1)}>
             <ChevronLeft className="size-4" strokeWidth={1.75} />
           </NavButton>
-          <NavButton label="Next month" disabled={!canGoNewer} onClick={() => onOffsetChange(offset - 1)}>
+          <NavButton label="Next month" disabled={offset <= 0} onClick={() => onOffsetChange(offset - 1)}>
             <ChevronRight className="size-4" strokeWidth={1.75} />
           </NavButton>
         </div>
@@ -189,56 +90,9 @@ function MonthContent({
           transition={{ duration: 0.16, ease: EASE }}
         >
           {status === "ready" ? (
-            <>
-              <MonthSummary totals={totals} />
-              {budgets.length > 0 && (
-                <PendingIncome
-                  transactions={inMonth.filter(isUndecidedIncome)}
-                  budgets={budgets}
-                  pendingIds={pendingIds}
-                  onDecide={onSetInPlan}
-                />
-              )}
-              <BudgetPlan
-                plan={planFor(budgets, inMonth, history)}
-                budgets={budgets}
-                balance={offset === 0 ? balance : null}
-                onSave={onSaveBudgets}
-              />
-              <ProjectsCard
-                totals={projectTotals(projects, inMonth, projectRows)}
-                projects={projects}
-                onSave={onSaveProjects}
-              />
-              <div className="mt-8">
-                {inMonth.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-neutral-200 px-6 py-10 text-center dark:border-neutral-800">
-                    <p className="text-sm text-neutral-500">
-                      {offset === 0 ? "Nothing logged this month yet" : `Nothing logged in ${title.name.en}`}
-                    </p>
-                    <Ar className="mt-0.5 text-sm text-neutral-400">مفيش حركات في الشهر ده</Ar>
-                  </div>
-                ) : (
-                  <ActivityFeed
-                    transactions={inMonth}
-                    budgets={budgets}
-                    pendingIds={pendingIds}
-                    onDelete={onDelete}
-                    onSetBudget={onSetBudget}
-                    onSetInPlan={onSetInPlan}
-                    projects={projects}
-                    onSetProject={onSetProject}
-                  />
-                )}
-              </div>
-            </>
+            children
           ) : status === "loading" ? (
-            <>
-              <SummarySkeleton />
-              <div className="mt-8">
-                <FeedSkeleton />
-              </div>
-            </>
+            skeleton
           ) : (
             <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-10 text-center dark:border-neutral-800">
               <p className="text-sm text-neutral-500">Couldn&apos;t load {title.name.en}</p>
@@ -254,7 +108,17 @@ function MonthContent({
           )}
         </motion.div>
       </AnimatePresence>
-    </>
+    </section>
+  );
+}
+
+/** Dashed box for a month or list with nothing in it. */
+export function EmptyState({ en, ar }: { en: string; ar: string }) {
+  return (
+    <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 px-6 py-10 text-center dark:border-neutral-800">
+      <p className="text-sm text-neutral-500">{en}</p>
+      <Ar className="mt-0.5 text-sm text-neutral-400">{ar}</Ar>
+    </div>
   );
 }
 
@@ -282,7 +146,7 @@ function NavButton({
   );
 }
 
-function MonthSummary({ totals }: { totals: Totals }) {
+export function MonthSummary({ totals }: { totals: Totals }) {
   const { income, expense, net } = totals;
   const spentShare = income > 0 ? Math.min(expense / income, 1) : null;
 
@@ -355,7 +219,7 @@ function Stat({
   );
 }
 
-function SummarySkeleton() {
+export function SummarySkeleton() {
   return (
     <div className="mt-4 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
       <div className="h-3 w-12 rounded bg-neutral-100 dark:bg-neutral-800" />
