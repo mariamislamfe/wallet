@@ -39,7 +39,7 @@ const TRANSFER = /\b(?:transfer(?:red)?|instapay|ipn)\b|تحويل|انستاب�
 
 // Incoming is checked first, so "transfer received" / "تحويل وارد" stay income.
 const INCOME = /\b(?:credited|deposit(?:ed)?|received|refund(?:ed)?|reversal|reversed|added\s+to|transfer(?:red)?\s+from)\b|إيداع|ايداع|استرداد|مرتجع|إضافة|اضافة|وارد|إستلام|استلام|استقبال/i;
-const EXPENSE = /\b(?:charged|purchase[ds]?|debited|used|paid|payment|spent|transaction|transfer(?:red)?|sent|instapay|ipn)\b|خصم|شراء|مشتريات|سداد|دفع|عملية|حركة|تحويل|حولت|إرسال|ارسال|انستاباي|إنستاباي/i;
+const EXPENSE = /\b(?:charged|purchase[ds]?|debited|used|paid|payment|spent|transaction|transfer(?:red)?|sent|instapay|ipn)\b|خصم|شراء|مشتريات|سداد|دفع|عملية|حركة|تحويل|حولت|سحب|إرسال|ارسال|انستاباي|إنستاباي/i;
 
 // `\b` only understands ASCII, so Arabic words are delimited by whitespace instead.
 const MERCHANT = [
@@ -85,6 +85,8 @@ export function parseBankSms(raw: string): ParsedSms {
   if (!text) return { ok: false, reason: "empty message" };
 
   for (const [pattern, reason] of SKIP) {
+    // "سحب" also describes money leaving by InstaPay, which is real spending.
+    if (reason === "cash withdrawal" && TRANSFER.test(text)) continue;
     if (pattern.test(text)) return { ok: false, reason };
   }
 
