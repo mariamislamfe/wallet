@@ -9,6 +9,7 @@ import {
   loadTransactions,
   restoreTransaction,
   saveBudgets,
+  setIncomeInPlan,
   setTransactionBudget,
   setWalletBalance,
 } from "@/app/actions";
@@ -18,8 +19,8 @@ import { MonthView, type MonthStatus } from "@/components/month-view";
 import { QuickEntry } from "@/components/quick-entry";
 import { Toast, type ToastState } from "@/components/toast";
 import { useMounted } from "@/lib/client";
-import { applyToBalances, mergeTransactions } from "@/lib/finance";
-import { monthOffsetOf, monthRange } from "@/lib/format";
+import { applyToBalances, mergeTransactions, splitOf } from "@/lib/finance";
+import { formatMoney, monthOffsetOf, monthRange } from "@/lib/format";
 import type {
   ActionResult,
   Balances,
@@ -180,7 +181,7 @@ export function Dashboard({
 
   const handleAdd = useCallback(
     (input: NewTransaction) => {
-      const transaction: Transaction = { ...input, source: "manual", created_at: new Date().toISOString() };
+      const transaction: Transaction = { ...input, source: "manual", in_plan: null, created_at: new Date().toISOString() };
       setMonthOffset(0);
       mutate(
         { kind: "add", transaction },
@@ -239,6 +240,29 @@ export function Dashboard({
       );
     },
     [mutate],
+  );
+
+  const handleSetInPlan = useCallback(
+    (transaction: Transaction, inPlan: boolean | null) => {
+      if (transaction.in_plan === inPlan) return;
+      const split = inPlan ? splitOf(budgets, transaction.amount) : [];
+      mutate(
+        { kind: "replace", transaction: { ...transaction, in_plan: inPlan } },
+        () => setIncomeInPlan(transaction.id, inPlan),
+        (updated, prev) => ({
+          ...prev,
+          transactions: prev.transactions.map((tx) => (tx.id === updated.id ? updated : tx)),
+        }),
+        split.length > 0
+          ? () =>
+              showToast({
+                message: split.map((part) => `${part.name} ${formatMoney(part.amount)}`).join(" · "),
+                tone: "neutral",
+              })
+          : undefined,
+      );
+    },
+    [budgets, mutate, showToast],
   );
 
   /** Resolves to an error message, or null once the plan is saved. */
@@ -307,10 +331,12 @@ export function Dashboard({
           status={monthStatus}
           transactions={view.transactions}
           budgets={budgets}
+          balance={view.balances.cash + view.balances.visa}
           pendingIds={pendingIds}
           onOffsetChange={changeMonth}
           onSaveBudgets={handleSaveBudgets}
           onSetBudget={handleSetBudget}
+          onSetInPlan={handleSetInPlan}
           onRetry={() => setRetryCount((count) => count + 1)}
           onDelete={handleDelete}
         />

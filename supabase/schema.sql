@@ -95,6 +95,15 @@ alter table public.transactions
 alter table public.transactions
   add column if not exists source_hash text unique;
 
+-- `in_plan` on income: null while waiting for the user to decide, true when the
+-- plan's % lines are taken from it, false when it's kept out of the plan.
+alter table public.transactions
+  add column if not exists in_plan boolean;
+
+-- `due_day` on a line: the day of the month it gets paid (a subscription on the 17th).
+alter table public.budgets
+  add column if not exists due_day smallint check (due_day between 1 and 31);
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security
 -- RLS is on with no policies, so the public anon key can neither read nor

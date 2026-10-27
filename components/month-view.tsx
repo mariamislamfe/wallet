@@ -6,8 +6,9 @@ import { ChevronLeft, ChevronRight, RotateCw } from "lucide-react";
 import { ActivityFeed, FeedSkeleton } from "@/components/activity-feed";
 import { Ar } from "@/components/ar";
 import { BudgetPlan } from "@/components/budget-plan";
+import { PendingIncome } from "@/components/pending-income";
 import { cn, useMounted } from "@/lib/client";
-import { planFor, totalsFor, type Totals } from "@/lib/finance";
+import { isUndecidedIncome, planFor, totalsFor, type Totals } from "@/lib/finance";
 import { formatMoney, monthRange, monthTitle } from "@/lib/format";
 import type { Budget, BudgetInput, Transaction } from "@/types/finance";
 
@@ -20,11 +21,14 @@ type Props = {
   status: MonthStatus;
   transactions: Transaction[];
   budgets: Budget[];
+  /** Cash + Visa right now. */
+  balance: number;
   pendingIds: ReadonlySet<string>;
   onOffsetChange: (offset: number) => void;
   onRetry: () => void;
   onDelete: (tx: Transaction) => void;
   onSetBudget: (tx: Transaction, budgetId: string | null) => void;
+  onSetInPlan: (tx: Transaction, inPlan: boolean | null) => void;
   onSaveBudgets: (lines: BudgetInput[]) => Promise<string | null>;
 };
 
@@ -36,11 +40,13 @@ export function MonthView({
   status,
   transactions,
   budgets,
+  balance,
   pendingIds,
   onOffsetChange,
   onRetry,
   onDelete,
   onSetBudget,
+  onSetInPlan,
   onSaveBudgets,
 }: Props) {
   // Month boundaries depend on the viewer's timezone, so render them client-side only.
@@ -55,11 +61,13 @@ export function MonthView({
           status={status}
           transactions={transactions}
           budgets={budgets}
+          balance={balance}
           pendingIds={pendingIds}
           onOffsetChange={onOffsetChange}
           onRetry={onRetry}
           onDelete={onDelete}
           onSetBudget={onSetBudget}
+          onSetInPlan={onSetInPlan}
           onSaveBudgets={onSaveBudgets}
         />
       ) : (
@@ -81,11 +89,13 @@ function MonthContent({
   status,
   transactions,
   budgets,
+  balance,
   pendingIds,
   onOffsetChange,
   onRetry,
   onDelete,
   onSetBudget,
+  onSetInPlan,
   onSaveBudgets,
 }: Props) {
   const now = new Date();
@@ -150,10 +160,18 @@ function MonthContent({
           {status === "ready" ? (
             <>
               <MonthSummary totals={totals} />
+              {budgets.length > 0 && (
+                <PendingIncome
+                  transactions={inMonth.filter(isUndecidedIncome)}
+                  budgets={budgets}
+                  pendingIds={pendingIds}
+                  onDecide={onSetInPlan}
+                />
+              )}
               <BudgetPlan
                 plan={planFor(budgets, inMonth)}
                 budgets={budgets}
-                income={totals.income}
+                balance={offset === 0 ? balance : null}
                 onSave={onSaveBudgets}
               />
               <div className="mt-8">
@@ -171,6 +189,7 @@ function MonthContent({
                     pendingIds={pendingIds}
                     onDelete={onDelete}
                     onSetBudget={onSetBudget}
+                    onSetInPlan={onSetInPlan}
                   />
                 )}
               </div>

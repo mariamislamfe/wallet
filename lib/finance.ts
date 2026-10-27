@@ -49,10 +49,14 @@ export type BudgetUsage = { budget: Budget; allocated: number; spent: number };
 
 export type MonthPlan = {
   lines: BudgetUsage[];
+  /** Income the user put into the plan this month; % lines are shares of it. */
+  income: number;
   /** Sum of every line's allocation for the month. */
   allocated: number;
   /** Income not assigned to any line (negative when the plan exceeds income). */
   unallocated: number;
+  /** What's still set aside: each line's allocation minus what was spent from it. */
+  reserved: number;
   /** Spending not tagged with any line. */
   untagged: number;
 };
@@ -62,14 +66,20 @@ export function allocationFor(budget: Budget, income: number): number {
   return budget.kind === "percent" ? round2((income * budget.value) / 100) : budget.value;
 }
 
+/** Income the user hasn't yet put into or kept out of the plan. */
+export function isUndecidedIncome(tx: Transaction): boolean {
+  return tx.type === "income" && tx.in_plan === null;
+}
+
 export function planFor(budgets: Budget[], monthTransactions: Transaction[]): MonthPlan {
   const spentBy = new Map<string, number>();
   let income = 0;
   let untagged = 0;
 
   for (const tx of monthTransactions) {
-    if (tx.type === "income") income += tx.amount;
-    else if (tx.budget_id && budgets.some((b) => b.id === tx.budget_id)) {
+    if (tx.type === "income") {
+      if (tx.in_plan) income += tx.amount;
+    } else if (tx.budget_id && budgets.some((b) => b.id === tx.budget_id)) {
       spentBy.set(tx.budget_id, (spentBy.get(tx.budget_id) ?? 0) + tx.amount);
     } else untagged += tx.amount;
   }
@@ -80,8 +90,51 @@ export function planFor(budgets: Budget[], monthTransactions: Transaction[]): Mo
     spent: round2(spentBy.get(budget.id) ?? 0),
   }));
   const allocated = round2(lines.reduce((sum, line) => sum + line.allocated, 0));
+  const reserved = round2(lines.reduce((sum, line) => sum + Math.max(0, line.allocated - line.spent), 0));
 
-  return { lines, allocated, unallocated: round2(income - allocated), untagged: round2(untagged) };
+  return {
+    lines,
+    income: round2(income),
+    allocated,
+    unallocated: round2(income - allocated),
+    reserved,
+    untagged: round2(untagged),
+  };
+}
+
+/** How an income would be split by the plan's % lines ("Savings EGP 2,500"). */
+export function splitOf(budgets: Budget[], amount: number): { name: string; amount: number }[] {
+  return budgets
+    .filter((budget) => budget.kind === "percent")
+    .map((budget) => ({ name: budget.name, amount: allocationFor(budget, amount) }));
+}
+
+export type BillStatus = "paid" | "covered" | "short" | "overdue";
+
+/**
+ * For lines with a pay day this month: paid already, or whether the balance
+ * covers it together with every unpaid bill due before it. Unpaid past its day is overdue.
+ */
+export function billStatuses(plan: MonthPlan, balance: number, today: number): Map<string, BillStatus> {
+  const statuses = new Map<string, BillStatus>();
+  const bills = plan.lines
+    .filter((line) => line.budget.due_day !== null)
+    .sort((a, b) => a.budget.due_day! - b.budget.due_day!);
+
+  let needed = 0;
+  for (const line of bills) {
+    const left = round2(line.allocated - line.spent);
+    if (left <= 0) {
+      statuses.set(line.budget.id, "paid");
+      continue;
+    }
+    needed += left;
+    statuses.set(
+      line.budget.id,
+      today > line.budget.due_day! ? "overdue" : balance >= needed ? "covered" : "short",
+    );
+  }
+  return statuses;
 }
 
 /** The line last used for an expense with this description, so repeat entries tag themselves. */

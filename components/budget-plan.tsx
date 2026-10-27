@@ -2,21 +2,28 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { PieChart, Plus, Trash2, X } from "lucide-react";
+import { CalendarDays, Check, PieChart, Plus, Trash2, X } from "lucide-react";
 
 import { Ar } from "@/components/ar";
 import { cn, uuid } from "@/lib/client";
-import { round2, sanitizeAmountInput, type BudgetUsage, type MonthPlan } from "@/lib/finance";
+import {
+  billStatuses,
+  round2,
+  sanitizeAmountInput,
+  type BillStatus,
+  type BudgetUsage,
+  type MonthPlan,
+} from "@/lib/finance";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { BUDGET_KINDS, type Budget, type BudgetInput, type BudgetKind } from "@/types/finance";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 const PRESETS: Omit<BudgetInput, "id">[] = [
-  { name: "Charity", kind: "percent", value: 10 },
-  { name: "Savings", kind: "percent", value: 20 },
-  { name: "Fun", kind: "fixed", value: 1000 },
-  { name: "Bills", kind: "fixed", value: 2000 },
+  { name: "Charity", kind: "percent", value: 10, due_day: null },
+  { name: "Savings", kind: "percent", value: 20, due_day: null },
+  { name: "Fun", kind: "fixed", value: 1000, due_day: null },
+  { name: "Bills", kind: "fixed", value: 2000, due_day: null },
 ];
 
 function shareLabel(budget: Pick<Budget, "kind" | "value">): string {
@@ -26,12 +33,15 @@ function shareLabel(budget: Pick<Budget, "kind" | "value">): string {
 type PlanProps = {
   plan: MonthPlan;
   budgets: Budget[];
-  income: number;
+  /** Cash + Visa right now; only passed for the current month. */
+  balance: number | null;
   onSave: (lines: BudgetInput[]) => Promise<string | null>;
 };
 
-export function BudgetPlan({ plan, budgets, income, onSave }: PlanProps) {
+export function BudgetPlan({ plan, budgets, balance, onSave }: PlanProps) {
   const [editing, setEditing] = useState(false);
+  const statuses = balance === null ? null : billStatuses(plan, balance, new Date().getDate());
+  const free = balance === null ? null : round2(balance - plan.reserved);
 
   return (
     <>
@@ -55,8 +65,8 @@ export function BudgetPlan({ plan, budgets, income, onSave }: PlanProps) {
         <div className="mt-3 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[13px] font-medium text-neutral-500">
-              Plan <span aria-hidden className="mx-1 text-neutral-300 dark:text-neutral-600">·</span>
-              <Ar className="font-normal text-neutral-400">التقسيمة</Ar>
+              Pockets <span aria-hidden className="mx-1 text-neutral-300 dark:text-neutral-600">·</span>
+              <Ar className="font-normal text-neutral-400">الجيوب</Ar>
             </p>
             <button
               type="button"
@@ -67,24 +77,64 @@ export function BudgetPlan({ plan, budgets, income, onSave }: PlanProps) {
             </button>
           </div>
 
-          <ul className="mt-3 space-y-4">
+          {free !== null && balance !== null && (
+            <div
+              className={cn(
+                "mt-3 rounded-xl p-3",
+                free >= 0 ? "bg-emerald-50 dark:bg-emerald-950/40" : "bg-red-50 dark:bg-red-950/40",
+              )}
+            >
+              <p className="text-xs font-medium text-neutral-600 dark:text-neutral-300">
+                Can be used <span aria-hidden className="mx-1 text-neutral-300 dark:text-neutral-600">·</span>
+                <Ar className="font-normal text-neutral-500">تقدري تصرفي</Ar>
+              </p>
+              <p
+                className={cn(
+                  "mt-0.5 truncate text-2xl font-semibold tracking-[-0.02em] tabular-nums",
+                  free >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+                )}
+              >
+                {formatMoney(Math.max(free, 0))}
+              </p>
+              <p className="mt-1 text-xs text-neutral-500 tabular-nums">
+                {free >= 0 ? (
+                  <>
+                    Total {formatMoney(balance)} − set aside {formatMoney(plan.reserved)}
+                  </>
+                ) : (
+                  <span className="text-red-600 dark:text-red-400">
+                    {formatMoney(-free)} into money set aside <Ar className="ms-1">· دخلتي على فلوس الجيوب</Ar>
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
+
+          <ul className="mt-4 space-y-4">
             {plan.lines.map((line) => (
-              <PlanLine key={line.budget.id} line={line} hasIncome={income > 0} />
+              <PlanLine
+                key={line.budget.id}
+                line={line}
+                hasIncome={plan.income > 0}
+                status={statuses?.get(line.budget.id) ?? null}
+              />
             ))}
           </ul>
 
           <dl className="mt-4 space-y-1 border-t border-neutral-100 pt-3 text-xs text-neutral-500 dark:border-neutral-800">
-            {income > 0 && (
+            <div className="flex justify-between gap-3">
+              <dt>Income split this month</dt>
+              <dd className="tabular-nums">{formatMoney(plan.income)}</dd>
+            </div>
+            {plan.income > 0 && plan.unallocated < 0 && (
               <div className="flex justify-between gap-3">
-                <dt>{plan.unallocated >= 0 ? "Not planned yet" : "Plan exceeds income by"}</dt>
-                <dd className={cn("tabular-nums", plan.unallocated < 0 && "text-red-600 dark:text-red-400")}>
-                  {formatMoney(Math.abs(plan.unallocated))}
-                </dd>
+                <dt>Plan exceeds that income by</dt>
+                <dd className="text-red-600 tabular-nums dark:text-red-400">{formatMoney(-plan.unallocated)}</dd>
               </div>
             )}
             {plan.untagged > 0 && (
               <div className="flex justify-between gap-3">
-                <dt>Spending without a budget</dt>
+                <dt>Spent outside the pockets</dt>
                 <dd className="tabular-nums">{formatMoney(plan.untagged)}</dd>
               </div>
             )}
@@ -94,38 +144,76 @@ export function BudgetPlan({ plan, budgets, income, onSave }: PlanProps) {
 
       <AnimatePresence>
         {editing && (
-          <BudgetEditor
-            budgets={budgets}
-            income={income}
-            onClose={() => setEditing(false)}
-            onSave={onSave}
-          />
+          <BudgetEditor budgets={budgets} income={plan.income} onClose={() => setEditing(false)} onSave={onSave} />
         )}
       </AnimatePresence>
     </>
   );
 }
 
-function PlanLine({ line, hasIncome }: { line: BudgetUsage; hasIncome: boolean }) {
+const BILL_LABELS: Record<BillStatus, { text: string; className: string }> = {
+  paid: { text: "Paid", className: "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300" },
+  covered: {
+    text: "Money's there",
+    className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  },
+  short: { text: "Not enough", className: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" },
+  overdue: { text: "Not paid yet", className: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300" },
+};
+
+function PlanLine({
+  line,
+  hasIncome,
+  status,
+}: {
+  line: BudgetUsage;
+  hasIncome: boolean;
+  status: BillStatus | null;
+}) {
   const { budget, allocated, spent } = line;
   const waitingForIncome = budget.kind === "percent" && !hasIncome;
   const share = allocated > 0 ? Math.min(spent / allocated, 1) : spent > 0 ? 1 : 0;
-  const over = round2(spent - allocated);
+  const left = round2(allocated - spent);
+  const bill = status ? BILL_LABELS[status] : null;
 
   return (
     <li>
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="flex min-w-0 items-baseline gap-1.5">
-          <bdi className="truncate text-sm font-medium">{budget.name}</bdi>
-          <span className="shrink-0 text-xs text-neutral-400 tabular-nums">{shareLabel(budget)}</span>
-        </p>
-        <p className="shrink-0 text-xs text-neutral-500 tabular-nums">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex min-w-0 items-baseline gap-1.5">
+            <bdi className="truncate text-sm font-medium">{budget.name}</bdi>
+            <span className="shrink-0 text-xs text-neutral-400 tabular-nums">{shareLabel(budget)}</span>
+          </p>
+          {budget.due_day !== null && (
+            <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-neutral-500">
+              <span className="inline-flex items-center gap-1">
+                <CalendarDays className="size-3" strokeWidth={1.75} />
+                Day {budget.due_day}
+              </span>
+              {bill && (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 leading-[18px] font-medium",
+                    bill.className,
+                  )}
+                >
+                  {status === "paid" && <Check className="size-3" strokeWidth={2.25} />}
+                  {bill.text}
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+        <p className="shrink-0 text-end tabular-nums">
           {waitingForIncome ? (
-            "No income yet"
-          ) : over > 0 ? (
-            <span className="text-red-600 dark:text-red-400">{formatMoney(over)} over</span>
+            <span className="text-xs text-neutral-500">No income split yet</span>
+          ) : left < 0 ? (
+            <span className="text-sm font-semibold text-red-600 dark:text-red-400">{formatMoney(-left)} over</span>
           ) : (
-            `${formatMoney(allocated - spent)} left`
+            <>
+              <span className="block text-sm font-semibold">{formatMoney(left)}</span>
+              <span className="block text-[11px] text-neutral-400">left</span>
+            </>
           )}
         </p>
       </div>
@@ -133,22 +221,29 @@ function PlanLine({ line, hasIncome }: { line: BudgetUsage; hasIncome: boolean }
         <div
           className={cn(
             "h-full rounded-full transition-[width] duration-500 ease-out-quint",
-            over > 0 ? "bg-red-500" : "bg-neutral-900 dark:bg-neutral-100",
+            left < 0 ? "bg-red-500" : "bg-neutral-900 dark:bg-neutral-100",
           )}
           style={{ width: `${share * 100}%` }}
         />
       </div>
       <p className="mt-1 text-[11px] text-neutral-400 tabular-nums">
-        {formatMoney(spent)} of {waitingForIncome ? `${formatNumber(budget.value)}% of income` : formatMoney(allocated)}
+        {formatMoney(spent)} used of{" "}
+        {waitingForIncome ? `${formatNumber(budget.value)}% of income` : formatMoney(allocated)}
       </p>
     </li>
   );
 }
 
-type Draft = { id: string; name: string; kind: BudgetKind; value: string };
+type Draft = { id: string; name: string; kind: BudgetKind; value: string; dueDay: string };
 
-function toDraft(budget: Pick<Budget, "name" | "kind" | "value"> & { id?: string }): Draft {
-  return { id: budget.id ?? uuid(), name: budget.name, kind: budget.kind, value: String(budget.value) };
+function toDraft(budget: Pick<Budget, "name" | "kind" | "value" | "due_day"> & { id?: string }): Draft {
+  return {
+    id: budget.id ?? uuid(),
+    name: budget.name,
+    kind: budget.kind,
+    value: String(budget.value),
+    dueDay: budget.due_day === null ? "" : String(budget.due_day),
+  };
 }
 
 function BudgetEditor({
@@ -202,7 +297,7 @@ function BudgetEditor({
     focusLast.current = !preset;
     setDrafts((current) => [
       ...current,
-      preset ? toDraft(preset) : { id: uuid(), name: "", kind: "percent", value: "" },
+      preset ? toDraft(preset) : { id: uuid(), name: "", kind: "percent", value: "", dueDay: "" },
     ]);
     setError(null);
   }
@@ -216,7 +311,11 @@ function BudgetEditor({
       if (!name) return setError("Give every line a name.");
       if (!(value > 0)) return setError(`${name}: enter an amount above zero.`);
       if (d.kind === "percent" && value > 100) return setError(`${name}: a share can't pass 100%.`);
-      lines.push({ id: d.id, name, kind: d.kind, value: round2(value) });
+      const dueDay = d.kind === "fixed" && d.dueDay ? Number(d.dueDay) : null;
+      if (dueDay !== null && !(Number.isInteger(dueDay) && dueDay >= 1 && dueDay <= 31)) {
+        return setError(`${name}: pay day must be 1–31.`);
+      }
+      lines.push({ id: d.id, name, kind: d.kind, value: round2(value), due_day: dueDay });
     }
     setSaving(true);
     const failure = await onSave(lines);
@@ -331,6 +430,22 @@ function BudgetEditor({
                     </span>
                   </label>
                 </div>
+                {draft.kind === "fixed" && (
+                  <label className="mt-2 flex h-10 items-center gap-2 rounded-lg bg-white px-3 text-sm text-neutral-500 dark:bg-neutral-900">
+                    <CalendarDays className="size-4 shrink-0" strokeWidth={1.5} />
+                    <span className="shrink-0">
+                      Pay day <Ar className="text-neutral-400">يوم الدفع</Ar>
+                    </span>
+                    <input
+                      inputMode="numeric"
+                      value={draft.dueDay}
+                      placeholder="—"
+                      aria-label="Day of the month it's paid (optional)"
+                      onChange={(event) => update(draft.id, { dueDay: event.target.value.replace(/\D/g, "").slice(0, 2) })}
+                      className="min-w-0 flex-1 bg-transparent text-end text-base font-medium text-neutral-900 tabular-nums outline-none placeholder:text-neutral-300 dark:text-neutral-100 dark:placeholder:text-neutral-600"
+                    />
+                  </label>
+                )}
               </li>
             ))}
           </ul>

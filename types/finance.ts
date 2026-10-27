@@ -26,6 +26,8 @@ export type Transaction = {
   description: string;
   budget_id: string | null;
   source: TransactionSource;
+  /** Income only: null until the user decides, then whether the plan's % lines come out of it. */
+  in_plan: boolean | null;
   created_at: string;
 };
 
@@ -36,6 +38,8 @@ export type Budget = {
   kind: BudgetKind;
   value: number;
   position: number;
+  /** Day of the month this line gets paid, e.g. a subscription on the 17th. */
+  due_day: number | null;
 };
 
 /** `id` is generated on the client so optimistic rows keep a stable key once confirmed. */
@@ -44,7 +48,7 @@ export type NewTransaction = Pick<
   "id" | "amount" | "type" | "wallet_type" | "description" | "budget_id"
 >;
 
-export type BudgetInput = Pick<Budget, "id" | "name" | "kind" | "value">;
+export type BudgetInput = Pick<Budget, "id" | "name" | "kind" | "value" | "due_day">;
 
 export type Balances = Record<WalletType, number>;
 
@@ -83,6 +87,7 @@ export type Database = {
           budget_id?: string | null;
           source?: TransactionSource;
           source_hash?: string | null;
+          in_plan?: boolean | null;
           created_at?: string;
         };
         Update: {
@@ -94,6 +99,7 @@ export type Database = {
           budget_id?: string | null;
           source?: TransactionSource;
           source_hash?: string | null;
+          in_plan?: boolean | null;
           created_at?: string;
         };
         Relationships: [];
@@ -106,6 +112,7 @@ export type Database = {
           kind: BudgetKind;
           value: number;
           position?: number;
+          due_day?: number | null;
           created_at?: string;
         };
         Update: {
@@ -114,6 +121,7 @@ export type Database = {
           kind?: BudgetKind;
           value?: number;
           position?: number;
+          due_day?: number | null;
           created_at?: string;
         };
         Relationships: [];

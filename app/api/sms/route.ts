@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { safeEqual } from "@/lib/auth";
-import { TRANSACTION_COLUMNS, fetchBudgets, fetchTransactions, normalizeTransaction } from "@/lib/data";
-import { planFor, totalsFor } from "@/lib/finance";
+import { TRANSACTION_COLUMNS, fetchBalances, fetchBudgets, fetchTransactions, normalizeTransaction } from "@/lib/data";
+import { planFor, round2 } from "@/lib/finance";
 import { formatMoney, formatSignedMoney } from "@/lib/format";
 import { parseBankSms } from "@/lib/sms";
 import { getSupabase } from "@/lib/supabase";
@@ -28,28 +28,35 @@ function reply(status: number, body: { status: string; message: string; [key: st
   return NextResponse.json(body, { status });
 }
 
-/** Second notification line: what's left on the tagged budget line, else the month's running total. */
+/**
+ * Second notification line: income asks to be split; spending from a pocket
+ * shows what's left in it, other spending shows what can still be used.
+ */
 async function monthLine(tx: Transaction): Promise<string> {
+  if (tx.type === "income") return "دخل جديد: افتحي التطبيق وقرري يدخل في التقسيمة ولا لأ";
+
   const now = new Date();
   const month = cairoMonth.format(now);
-  const [recent, budgets] = await Promise.all([
+  const [recent, budgets, balances] = await Promise.all([
     fetchTransactions(new Date(now.getTime() - 32 * 86_400_000)),
     fetchBudgets(),
+    fetchBalances(),
   ]);
   const inMonth = recent.filter((row) => cairoMonth.format(new Date(row.created_at)) === month);
+  const plan = planFor(budgets, inMonth);
 
-  const line = planFor(budgets, inMonth).lines.find((usage) => usage.budget.id === tx.budget_id);
+  const line = plan.lines.find((usage) => usage.budget.id === tx.budget_id);
   if (line) {
-    const left = line.allocated - line.spent;
+    const left = round2(line.allocated - line.spent);
     return left >= 0
       ? `${line.budget.name}: فاضل ${formatMoney(left)} من ${formatMoney(line.allocated)}`
       : `${line.budget.name}: زيادة ${formatMoney(-left)} عن الميزانية`;
   }
 
-  const totals = totalsFor(inMonth);
-  return tx.type === "expense"
-    ? `المصروف الشهر ده: ${formatMoney(totals.expense)}`
-    : `الدخل الشهر ده: ${formatMoney(totals.income)}`;
+  const free = round2(balances.cash + balances.visa - plan.reserved);
+  return free >= 0
+    ? `تقدري تصرفي: ${formatMoney(free)}`
+    : `⚠️ دخلتي على فلوس الجيوب بـ ${formatMoney(-free)}`;
 }
 
 async function readText(request: Request): Promise<string> {

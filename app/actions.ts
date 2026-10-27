@@ -95,7 +95,11 @@ function validateBudgets(input: BudgetInput[]): BudgetInput[] {
     if (!(BUDGET_KINDS as readonly string[]).includes(line.kind)) throw new ValidationError("Pick % or EGP.");
     const value = validateAmount(line.value);
     if (line.kind === "percent" && value > 100) throw new ValidationError(`${name}: a share can't pass 100%.`);
-    return { id: validateId(line.id), name, kind: line.kind, value };
+    const dueDay = line.due_day ?? null;
+    if (dueDay !== null && !(Number.isInteger(dueDay) && dueDay >= 1 && dueDay <= 31)) {
+      throw new ValidationError(`${name}: pay day must be 1–31.`);
+    }
+    return { id: validateId(line.id), name, kind: line.kind, value, due_day: line.kind === "fixed" ? dueDay : null };
   });
 }
 
@@ -146,6 +150,7 @@ export async function restoreTransaction(
         {
           ...validateNewTransaction(tx),
           source: tx.source === "sms" ? "sms" : "manual",
+          in_plan: tx.type === "income" && typeof tx.in_plan === "boolean" ? tx.in_plan : null,
           created_at: createdAt.toISOString(),
         },
         { onConflict: "id", ignoreDuplicates: true },
@@ -175,6 +180,29 @@ export async function setTransactionBudget(
       .update({ budget_id: validateBudgetId(budgetId) })
       .eq("id", validateId(id))
       .eq("type", "expense")
+      .select(TRANSACTION_COLUMNS)
+      .single();
+    if (error) throw error;
+
+    return { ok: true, data: normalizeTransaction(data) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** Decides whether an income counts toward the plan (null puts it back to undecided). */
+export async function setIncomeInPlan(
+  id: string,
+  inPlan: boolean | null,
+): Promise<ActionResult<Transaction>> {
+  try {
+    await authorize();
+    if (inPlan !== null && typeof inPlan !== "boolean") throw new ValidationError("Pick yes or no.");
+    const { data, error } = await getSupabase()
+      .from("transactions")
+      .update({ in_plan: inPlan })
+      .eq("id", validateId(id))
+      .eq("type", "income")
       .select(TRANSACTION_COLUMNS)
       .single();
     if (error) throw error;

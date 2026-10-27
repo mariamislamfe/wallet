@@ -46,8 +46,8 @@ export async function GET() {
   try {
     const checks = await Promise.all([
       getSupabase().from("wallets").select("type").limit(1),
-      getSupabase().from("budgets").select("id").limit(1),
-      getSupabase().from("transactions").select("budget_id, source").limit(1),
+      getSupabase().from("budgets").select("id, due_day").limit(1),
+      getSupabase().from("transactions").select("budget_id, source, in_plan").limit(1),
     ]);
     const failed = checks.find((check) => check.error);
     database = failed?.error ? `error: ${failed.error.message}` : "ok";

@@ -17,14 +17,33 @@ type Props = {
   pendingIds: ReadonlySet<string>;
   onDelete: (tx: Transaction) => void;
   onSetBudget: (tx: Transaction, budgetId: string | null) => void;
+  onSetInPlan: (tx: Transaction, inPlan: boolean | null) => void;
 };
+
+type PickerOption = { id: string; label: string; selected: boolean };
+
+const NONE = "none";
+
+/** Expenses pick a pocket; income picks whether the plan is split from it. */
+function pickerFor(tx: Transaction, budgets: Budget[]): PickerOption[] {
+  if (tx.type === "income") {
+    return [
+      { id: "in", label: "Split by plan", selected: tx.in_plan === true },
+      { id: "out", label: "Kept out", selected: tx.in_plan === false },
+    ];
+  }
+  return [
+    ...budgets.map((b) => ({ id: b.id, label: b.name, selected: b.id === tx.budget_id })),
+    { id: NONE, label: "None", selected: tx.budget_id === null },
+  ];
+}
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 const SWIPE_DISTANCE = 96;
 const SWIPE_VELOCITY = 700;
 
 // Day grouping depends on the viewer's timezone; the parent only renders this after mount.
-export function ActivityFeed({ transactions, budgets, pendingIds, onDelete, onSetBudget }: Props) {
+export function ActivityFeed({ transactions, budgets, pendingIds, onDelete, onSetBudget, onSetInPlan }: Props) {
   // The row whose budget picker is open; one at a time.
   const [pickingId, setPickingId] = useState<string | null>(null);
 
@@ -55,9 +74,10 @@ export function ActivityFeed({ transactions, budgets, pendingIds, onDelete, onSe
                 budgets={budgets}
                 picking={pickingId === tx.id}
                 onTogglePicker={() => setPickingId((id) => (id === tx.id ? null : tx.id))}
-                onPick={(budgetId) => {
+                onPick={(id) => {
                   setPickingId(null);
-                  onSetBudget(tx, budgetId);
+                  if (tx.type === "income") onSetInPlan(tx, id === "in");
+                  else onSetBudget(tx, id === NONE ? null : id);
                 }}
                 onDelete={onDelete}
               />
@@ -85,13 +105,21 @@ function FeedRow({
   budgets: Budget[];
   picking: boolean;
   onTogglePicker: () => void;
-  onPick: (budgetId: string | null) => void;
+  onPick: (id: string) => void;
   onDelete: (tx: Transaction) => void;
 }) {
   const income = tx.type === "income";
   const description = displayDescription(tx);
   const budget = budgets.find((b) => b.id === tx.budget_id) ?? null;
-  const taggable = !income && budgets.length > 0;
+  const taggable = budgets.length > 0;
+  // What the chip says: the pocket for an expense, the plan decision for income.
+  const tag = income
+    ? tx.in_plan === null
+      ? null
+      : tx.in_plan
+        ? "Split by plan"
+        : "Kept out"
+    : (budget?.name ?? null);
 
   return (
     <motion.li
@@ -139,20 +167,24 @@ function FeedRow({
                   disabled={pending}
                   onClick={onTogglePicker}
                   aria-expanded={picking}
-                  aria-label={budget ? `Budget: ${budget.name}. Change` : "Add to a budget"}
+                  aria-label={tag ? `${tag}. Change` : income ? "Split this income by the plan?" : "Add to a pocket"}
                   className={cn(
                     "relative flex max-w-[9rem] min-w-0 items-center gap-0.5 rounded-md px-1.5 text-[11px] leading-[18px] font-medium transition after:absolute after:-inset-2",
-                    budget
+                    tag
                       ? "bg-neutral-100 text-neutral-700 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
-                      : "border border-dashed border-neutral-300 text-neutral-400 hover:text-neutral-600 dark:border-neutral-700 dark:hover:text-neutral-300",
+                      : income
+                        ? "border border-dashed border-amber-400 text-amber-700 hover:text-amber-800 dark:border-amber-700 dark:text-amber-400"
+                        : "border border-dashed border-neutral-300 text-neutral-400 hover:text-neutral-600 dark:border-neutral-700 dark:hover:text-neutral-300",
                   )}
                 >
-                  {budget ? (
-                    <bdi className="truncate">{budget.name}</bdi>
+                  {tag ? (
+                    <bdi className="truncate">{tag}</bdi>
+                  ) : income ? (
+                    "Split?"
                   ) : (
                     <>
                       <Plus className="size-3" strokeWidth={2} />
-                      Budget
+                      Pocket
                     </>
                   )}
                 </button>
@@ -198,32 +230,27 @@ function FeedRow({
           >
             <div
               role="radiogroup"
-              aria-label="Budget"
+              aria-label={income ? "Split by plan" : "Pocket"}
               className="flex gap-1.5 overflow-x-auto px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
-              {[...budgets.map((b) => ({ id: b.id as string | null, name: b.name })), { id: null, name: "None" }].map(
-                (option) => {
-                  const selected = option.id === tx.budget_id;
-                  return (
-                    <button
-                      key={option.id ?? "none"}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => onPick(option.id)}
-                      className={cn(
-                        "h-8 shrink-0 rounded-full border px-3 text-[13px] transition active:scale-[0.97]",
-                        selected
-                          ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                          : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400",
-                        option.id === null && !selected && "text-neutral-400",
-                      )}
-                    >
-                      <bdi>{option.name}</bdi>
-                    </button>
-                  );
-                },
-              )}
+              {pickerFor(tx, budgets).map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={option.selected}
+                  onClick={() => onPick(option.id)}
+                  className={cn(
+                    "h-8 shrink-0 rounded-full border px-3 text-[13px] transition active:scale-[0.97]",
+                    option.selected
+                      ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
+                      : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400",
+                    option.id === NONE && !option.selected && "text-neutral-400",
+                  )}
+                >
+                  <bdi>{option.label}</bdi>
+                </button>
+              ))}
             </div>
           </motion.div>
         )}

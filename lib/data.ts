@@ -4,8 +4,8 @@ import { getSupabase } from "@/lib/supabase";
 import { EMPTY_BALANCES } from "@/lib/finance";
 import type { Balances, Budget, Transaction, Wallet } from "@/types/finance";
 
-export const TRANSACTION_COLUMNS = "id, amount, type, wallet_type, description, budget_id, source, created_at";
-export const BUDGET_COLUMNS = "id, name, kind, value, position";
+export const TRANSACTION_COLUMNS = "id, amount, type, wallet_type, description, budget_id, source, in_plan, created_at";
+export const BUDGET_COLUMNS = "id, name, kind, value, position, due_day";
 
 // PostgREST may serialise `numeric` as strings depending on precision; coerce defensively.
 export function normalizeTransaction(row: Transaction): Transaction {
@@ -13,7 +13,7 @@ export function normalizeTransaction(row: Transaction): Transaction {
 }
 
 export function normalizeBudget(row: Budget): Budget {
-  return { ...row, value: Number(row.value) };
+  return { ...row, value: Number(row.value), due_day: row.due_day ?? null };
 }
 
 function toBalances(rows: Pick<Wallet, "type" | "balance">[]): Balances {
