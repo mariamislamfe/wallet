@@ -2,30 +2,41 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { MessageSquareText, Plus, Trash2 } from "lucide-react";
+import { Briefcase, MessageSquareText, Plus, Trash2 } from "lucide-react";
 
 import { Ar } from "@/components/ar";
 import { cn } from "@/lib/client";
 import { WALLET_LABELS, displayDescription, totalsFor } from "@/lib/finance";
 import { formatMoney, formatRowTime, formatSignedMoney, groupByDay } from "@/lib/format";
-import type { Budget, Transaction } from "@/types/finance";
+import type { Budget, Project, Transaction } from "@/types/finance";
 
 type Props = {
   /** Already narrowed to the selected month. */
   transactions: Transaction[];
   budgets: Budget[];
+  projects: Project[];
   pendingIds: ReadonlySet<string>;
   onDelete: (tx: Transaction) => void;
   onSetBudget: (tx: Transaction, budgetId: string | null) => void;
   onSetInPlan: (tx: Transaction, inPlan: boolean | null) => void;
+  onSetProject: (tx: Transaction, projectId: string | null) => void;
 };
+
+/** Which chip's picker is open: the pocket/split one or the project one. */
+type PickerKind = "pocket" | "project";
 
 type PickerOption = { id: string; label: string; selected: boolean };
 
 const NONE = "none";
 
-/** Expenses pick a pocket; income picks whether the plan is split from it. */
-function pickerFor(tx: Transaction, budgets: Budget[]): PickerOption[] {
+/** Expenses pick a pocket; income picks whether the plan is split from it; both pick a project. */
+function pickerFor(tx: Transaction, kind: PickerKind, budgets: Budget[], projects: Project[]): PickerOption[] {
+  if (kind === "project") {
+    return [
+      ...projects.map((p) => ({ id: p.id, label: p.name, selected: p.id === tx.project_id })),
+      { id: NONE, label: "None", selected: tx.project_id === null },
+    ];
+  }
   if (tx.type === "income") {
     return [
       { id: "in", label: "Split by plan", selected: tx.in_plan === true },
@@ -43,9 +54,18 @@ const SWIPE_DISTANCE = 96;
 const SWIPE_VELOCITY = 700;
 
 // Day grouping depends on the viewer's timezone; the parent only renders this after mount.
-export function ActivityFeed({ transactions, budgets, pendingIds, onDelete, onSetBudget, onSetInPlan }: Props) {
-  // The row whose budget picker is open; one at a time.
-  const [pickingId, setPickingId] = useState<string | null>(null);
+export function ActivityFeed({
+  transactions,
+  budgets,
+  projects,
+  pendingIds,
+  onDelete,
+  onSetBudget,
+  onSetInPlan,
+  onSetProject,
+}: Props) {
+  // The one open picker: which row, and which of its chips.
+  const [picking, setPicking] = useState<{ id: string; kind: PickerKind } | null>(null);
 
   return groupByDay(transactions).map((group) => {
     const spent = totalsFor(group.items).expense;
@@ -72,11 +92,15 @@ export function ActivityFeed({ transactions, budgets, pendingIds, onDelete, onSe
                 first={index === 0}
                 pending={pendingIds.has(tx.id)}
                 budgets={budgets}
-                picking={pickingId === tx.id}
-                onTogglePicker={() => setPickingId((id) => (id === tx.id ? null : tx.id))}
-                onPick={(id) => {
-                  setPickingId(null);
-                  if (tx.type === "income") onSetInPlan(tx, id === "in");
+                projects={projects}
+                picking={picking?.id === tx.id ? picking.kind : null}
+                onTogglePicker={(kind) =>
+                  setPicking((open) => (open?.id === tx.id && open.kind === kind ? null : { id: tx.id, kind }))
+                }
+                onPick={(kind, id) => {
+                  setPicking(null);
+                  if (kind === "project") onSetProject(tx, id === NONE ? null : id);
+                  else if (tx.type === "income") onSetInPlan(tx, id === "in");
                   else onSetBudget(tx, id === NONE ? null : id);
                 }}
                 onDelete={onDelete}
@@ -94,6 +118,7 @@ function FeedRow({
   first,
   pending,
   budgets,
+  projects,
   picking,
   onTogglePicker,
   onPick,
@@ -103,9 +128,10 @@ function FeedRow({
   first: boolean;
   pending: boolean;
   budgets: Budget[];
-  picking: boolean;
-  onTogglePicker: () => void;
-  onPick: (id: string) => void;
+  projects: Project[];
+  picking: PickerKind | null;
+  onTogglePicker: (kind: PickerKind) => void;
+  onPick: (kind: PickerKind, id: string) => void;
   onDelete: (tx: Transaction) => void;
 }) {
   const income = tx.type === "income";
@@ -120,6 +146,7 @@ function FeedRow({
         ? "Split by plan"
         : "Kept out"
     : (budget?.name ?? null);
+  const project = projects.find((p) => p.id === tx.project_id) ?? null;
 
   return (
     <motion.li
@@ -157,7 +184,7 @@ function FeedRow({
             <p className="truncate text-[15px] leading-5 font-medium">
               <bdi>{description}</bdi>
             </p>
-            <div className="mt-1 flex items-center gap-2 text-xs text-neutral-500">
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500">
               <span className="rounded-md border border-neutral-200 px-1.5 text-[11px] leading-[18px] font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-400">
                 {WALLET_LABELS[tx.wallet_type].en}
               </span>
@@ -165,8 +192,8 @@ function FeedRow({
                 <button
                   type="button"
                   disabled={pending}
-                  onClick={onTogglePicker}
-                  aria-expanded={picking}
+                  onClick={() => onTogglePicker("pocket")}
+                  aria-expanded={picking === "pocket"}
                   aria-label={tag ? `${tag}. Change` : income ? "Split this income by the plan?" : "Add to a pocket"}
                   className={cn(
                     "relative flex max-w-[9rem] min-w-0 items-center gap-0.5 rounded-md px-1.5 text-[11px] leading-[18px] font-medium transition after:absolute after:-inset-2",
@@ -185,6 +212,33 @@ function FeedRow({
                     <>
                       <Plus className="size-3" strokeWidth={2} />
                       Pocket
+                    </>
+                  )}
+                </button>
+              )}
+              {projects.length > 0 && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => onTogglePicker("project")}
+                  aria-expanded={picking === "project"}
+                  aria-label={project ? `Project: ${project.name}. Change` : "Add to a project"}
+                  className={cn(
+                    "relative flex max-w-[9rem] min-w-0 items-center gap-1 rounded-md px-1.5 text-[11px] leading-[18px] font-medium transition after:absolute after:-inset-2",
+                    project
+                      ? "bg-sky-50 text-sky-800 hover:bg-sky-100 dark:bg-sky-950/60 dark:text-sky-300 dark:hover:bg-sky-950"
+                      : "border border-dashed border-neutral-300 text-neutral-400 hover:text-neutral-600 dark:border-neutral-700 dark:hover:text-neutral-300",
+                  )}
+                >
+                  {project ? (
+                    <>
+                      <Briefcase className="size-3 shrink-0" strokeWidth={2} />
+                      <bdi className="truncate">{project.name}</bdi>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="size-3" strokeWidth={2} />
+                      Project
                     </>
                   )}
                 </button>
@@ -220,7 +274,7 @@ function FeedRow({
       </div>
 
       <AnimatePresence initial={false}>
-        {picking && (
+        {picking !== null && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
@@ -230,16 +284,16 @@ function FeedRow({
           >
             <div
               role="radiogroup"
-              aria-label={income ? "Split by plan" : "Pocket"}
+              aria-label={picking === "project" ? "Project" : income ? "Split by plan" : "Pocket"}
               className="flex gap-1.5 overflow-x-auto px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
-              {pickerFor(tx, budgets).map((option) => (
+              {pickerFor(tx, picking, budgets, projects).map((option) => (
                 <button
                   key={option.id}
                   type="button"
                   role="radio"
                   aria-checked={option.selected}
-                  onClick={() => onPick(option.id)}
+                  onClick={() => onPick(picking, option.id)}
                   className={cn(
                     "h-8 shrink-0 rounded-full border px-3 text-[13px] transition active:scale-[0.97]",
                     option.selected

@@ -7,10 +7,19 @@ import { ActivityFeed, FeedSkeleton } from "@/components/activity-feed";
 import { Ar } from "@/components/ar";
 import { BudgetPlan } from "@/components/budget-plan";
 import { PendingIncome } from "@/components/pending-income";
+import { ProjectsCard } from "@/components/projects";
 import { cn, useMounted } from "@/lib/client";
-import { isPlanRow, isUndecidedIncome, planFor, totalsFor, type PlanRow, type Totals } from "@/lib/finance";
+import {
+  isPlanRow,
+  isUndecidedIncome,
+  planFor,
+  projectTotals,
+  totalsFor,
+  type PlanRow,
+  type Totals,
+} from "@/lib/finance";
 import { formatMoney, monthRange, monthTitle } from "@/lib/format";
-import type { Budget, BudgetInput, Transaction } from "@/types/finance";
+import type { Budget, BudgetInput, Project, ProjectInput, Transaction } from "@/types/finance";
 
 export type MonthStatus = "ready" | "loading" | "error";
 
@@ -21,6 +30,7 @@ type Props = {
   status: MonthStatus;
   transactions: Transaction[];
   budgets: Budget[];
+  projects: Project[];
   /** Cash + Visa right now. */
   balance: number;
   /** Pocket rows from before the loaded window; % pockets carry them forward. */
@@ -32,6 +42,8 @@ type Props = {
   onSetBudget: (tx: Transaction, budgetId: string | null) => void;
   onSetInPlan: (tx: Transaction, inPlan: boolean | null) => void;
   onSaveBudgets: (lines: BudgetInput[]) => Promise<string | null>;
+  onSetProject: (tx: Transaction, projectId: string | null) => void;
+  onSaveProjects: (projects: ProjectInput[]) => Promise<string | null>;
 };
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -42,6 +54,7 @@ export function MonthView({
   status,
   transactions,
   budgets,
+  projects,
   balance,
   planHistory,
   pendingIds,
@@ -51,6 +64,8 @@ export function MonthView({
   onSetBudget,
   onSetInPlan,
   onSaveBudgets,
+  onSetProject,
+  onSaveProjects,
 }: Props) {
   // Month boundaries depend on the viewer's timezone, so render them client-side only.
   const mounted = useMounted();
@@ -64,6 +79,7 @@ export function MonthView({
           status={status}
           transactions={transactions}
           budgets={budgets}
+          projects={projects}
           balance={balance}
           planHistory={planHistory}
           pendingIds={pendingIds}
@@ -73,6 +89,8 @@ export function MonthView({
           onSetBudget={onSetBudget}
           onSetInPlan={onSetInPlan}
           onSaveBudgets={onSaveBudgets}
+          onSetProject={onSetProject}
+          onSaveProjects={onSaveProjects}
         />
       ) : (
         <>
@@ -93,6 +111,7 @@ function MonthContent({
   status,
   transactions,
   budgets,
+  projects,
   balance,
   planHistory,
   pendingIds,
@@ -102,6 +121,8 @@ function MonthContent({
   onSetBudget,
   onSetInPlan,
   onSaveBudgets,
+  onSetProject,
+  onSaveProjects,
 }: Props) {
   const now = new Date();
   const { start, end } = monthRange(offset, now);
@@ -114,6 +135,7 @@ function MonthContent({
   const byId = new Map<string, PlanRow>();
   for (const row of [...planHistory, ...transactions]) byId.set(row.id, row);
   const history = [...byId.values()].filter((row) => Date.parse(row.created_at) < start.getTime() && isPlanRow(row));
+  const projectRows = [...byId.values()].filter((row) => row.project_id !== null);
   const title = monthTitle(offset, now);
   const canGoOlder = offset < maxOffset;
   const canGoNewer = offset > 0;
@@ -183,6 +205,11 @@ function MonthContent({
                 balance={offset === 0 ? balance : null}
                 onSave={onSaveBudgets}
               />
+              <ProjectsCard
+                totals={projectTotals(projects, inMonth, projectRows)}
+                projects={projects}
+                onSave={onSaveProjects}
+              />
               <div className="mt-8">
                 {inMonth.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-neutral-200 px-6 py-10 text-center dark:border-neutral-800">
@@ -199,6 +226,8 @@ function MonthContent({
                     onDelete={onDelete}
                     onSetBudget={onSetBudget}
                     onSetInPlan={onSetInPlan}
+                    projects={projects}
+                    onSetProject={onSetProject}
                   />
                 )}
               </div>

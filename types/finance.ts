@@ -28,6 +28,7 @@ export type Transaction = {
   source: TransactionSource;
   /** Income only: null until the user decides, then whether the plan's % lines come out of it. */
   in_plan: boolean | null;
+  project_id: string | null;
   created_at: string;
 };
 
@@ -42,10 +43,19 @@ export type Budget = {
   due_day: number | null;
 };
 
+/** A project income comes from and spending goes to. */
+export type Project = {
+  id: string;
+  name: string;
+  position: number;
+};
+
+export type ProjectInput = Pick<Project, "id" | "name">;
+
 /** `id` is generated on the client so optimistic rows keep a stable key once confirmed. */
 export type NewTransaction = Pick<
   Transaction,
-  "id" | "amount" | "type" | "wallet_type" | "description" | "budget_id"
+  "id" | "amount" | "type" | "wallet_type" | "description" | "budget_id" | "project_id"
 >;
 
 export type BudgetInput = Pick<Budget, "id" | "name" | "kind" | "value" | "due_day">;
@@ -88,6 +98,7 @@ export type Database = {
           source?: TransactionSource;
           source_hash?: string | null;
           in_plan?: boolean | null;
+          project_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -100,6 +111,7 @@ export type Database = {
           source?: TransactionSource;
           source_hash?: string | null;
           in_plan?: boolean | null;
+          project_id?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -124,6 +136,12 @@ export type Database = {
           due_day?: number | null;
           created_at?: string;
         };
+        Relationships: [];
+      };
+      projects: {
+        Row: Project & { created_at: string };
+        Insert: { id?: string; name: string; position?: number; created_at?: string };
+        Update: { id?: string; name?: string; position?: number; created_at?: string };
         Relationships: [];
       };
     };

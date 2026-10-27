@@ -105,6 +105,20 @@ alter table public.budgets
   add column if not exists due_day smallint check (due_day between 1 and 31);
 
 -- ---------------------------------------------------------------------------
+-- Projects: income and spending can be tagged with the project they belong to.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.projects (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null check (char_length(name) between 1 and 40),
+  position    integer not null default 0,
+  created_at  timestamptz not null default now()
+);
+
+alter table public.transactions
+  add column if not exists project_id uuid references public.projects (id) on delete set null;
+
+-- ---------------------------------------------------------------------------
 -- Row Level Security
 -- RLS is on with no policies, so the public anon key can neither read nor
 -- write. The app talks to Supabase only from the server with the
@@ -114,3 +128,4 @@ alter table public.budgets
 alter table public.wallets enable row level security;
 alter table public.transactions enable row level security;
 alter table public.budgets enable row level security;
+alter table public.projects enable row level security;

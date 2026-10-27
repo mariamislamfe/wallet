@@ -9,8 +9,10 @@ import {
   loadTransactions,
   restoreTransaction,
   saveBudgets,
+  saveProjects,
   setIncomeInPlan,
   setTransactionBudget,
+  setTransactionProject,
   setWalletBalance,
 } from "@/app/actions";
 import { Ar } from "@/components/ar";
@@ -26,6 +28,8 @@ import type {
   Balances,
   Budget,
   BudgetInput,
+  Project,
+  ProjectInput,
   NewTransaction,
   Transaction,
   WalletType,
@@ -74,6 +78,7 @@ type Props = {
   initialBudgets: Budget[];
   /** Split income and pocket spending from before `initialLoadedFrom`. */
   planHistory: PlanRow[];
+  initialProjects: Project[];
 };
 
 export function Dashboard({
@@ -83,6 +88,7 @@ export function Dashboard({
   firstTransactionAt,
   initialBudgets,
   planHistory,
+  initialProjects,
 }: Props) {
   // `confirmed` mirrors the database; `view` layers in-flight optimistic changes on top.
   const [confirmed, setConfirmed] = useState<FinanceState>({
@@ -94,6 +100,7 @@ export function Dashboard({
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const [budgets, setBudgets] = useState(initialBudgets);
+  const [projects, setProjects] = useState(initialProjects);
   const mounted = useMounted();
   const [monthOffset, setMonthOffset] = useState(0);
   const [loadedFrom, setLoadedFrom] = useState(() => Date.parse(initialLoadedFrom));
@@ -268,6 +275,43 @@ export function Dashboard({
     [budgets, mutate, showToast],
   );
 
+  const handleSetProject = useCallback(
+    (transaction: Transaction, projectId: string | null) => {
+      if (transaction.project_id === projectId) return;
+      mutate(
+        { kind: "replace", transaction: { ...transaction, project_id: projectId } },
+        () => setTransactionProject(transaction.id, projectId),
+        (updated, prev) => ({
+          ...prev,
+          transactions: prev.transactions.map((tx) => (tx.id === updated.id ? updated : tx)),
+        }),
+      );
+    },
+    [mutate],
+  );
+
+  /** Resolves to an error message, or null once the projects are saved. */
+  const handleSaveProjects = useCallback(async (list: ProjectInput[]): Promise<string | null> => {
+    let result: ActionResult<Project[]>;
+    try {
+      result = await saveProjects(list);
+    } catch {
+      return "You're offline. Try again.";
+    }
+    if (!result.ok) return result.error;
+
+    const kept = new Set(result.data.map((p) => p.id));
+    setProjects(result.data);
+    // Deleted projects untag their rows in the database; mirror that locally.
+    setConfirmed((prev) => ({
+      ...prev,
+      transactions: prev.transactions.map((tx) =>
+        tx.project_id && !kept.has(tx.project_id) ? { ...tx, project_id: null } : tx,
+      ),
+    }));
+    return null;
+  }, []);
+
   /** Resolves to an error message, or null once the plan is saved. */
   const handleSaveBudgets = useCallback(async (lines: BudgetInput[]): Promise<string | null> => {
     let result: ActionResult<Budget[]>;
@@ -325,6 +369,7 @@ export function Dashboard({
           balances={view.balances}
           transactions={view.transactions}
           budgets={budgets}
+          projects={projects}
           onSubmit={handleAdd}
         />
 
@@ -334,6 +379,7 @@ export function Dashboard({
           status={monthStatus}
           transactions={view.transactions}
           budgets={budgets}
+          projects={projects}
           balance={view.balances.cash + view.balances.visa}
           planHistory={planHistory}
           pendingIds={pendingIds}
@@ -341,6 +387,8 @@ export function Dashboard({
           onSaveBudgets={handleSaveBudgets}
           onSetBudget={handleSetBudget}
           onSetInPlan={handleSetInPlan}
+          onSetProject={handleSetProject}
+          onSaveProjects={handleSaveProjects}
           onRetry={() => setRetryCount((count) => count + 1)}
           onDelete={handleDelete}
         />

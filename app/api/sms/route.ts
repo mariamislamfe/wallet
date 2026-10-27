@@ -110,8 +110,22 @@ export async function POST(request: Request) {
   const description = parsed.merchant ?? (parsed.type === "expense" ? "Card purchase" : "Card deposit");
 
   try {
-    // Reuse the budget line last used for this merchant so repeat purchases tag themselves.
+    // Reuse the pocket and project last used for this merchant so repeat entries tag themselves.
     let budgetId: string | null = null;
+    let projectId: string | null = null;
+    if (parsed.merchant) {
+      const { data, error } = await supabase
+        .from("transactions")
+        .select("project_id")
+        .eq("type", parsed.type)
+        .eq("description", description)
+        .not("project_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      projectId = data?.project_id ?? null;
+    }
     if (parsed.type === "expense" && parsed.merchant) {
       const { data, error } = await supabase
         .from("transactions")
@@ -135,6 +149,7 @@ export async function POST(request: Request) {
           wallet_type: "visa",
           description: description.slice(0, 120),
           budget_id: budgetId,
+          project_id: projectId,
           source: "sms",
           source_hash: sha256(text),
         },

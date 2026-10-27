@@ -7,6 +7,7 @@ import {
   TRANSACTION_COLUMNS,
   fetchBalances,
   fetchBudgets,
+  fetchProjects,
   fetchTransactions,
   normalizeTransaction,
 } from "@/lib/data";
@@ -20,6 +21,8 @@ import {
   type BalanceMutation,
   type Budget,
   type BudgetInput,
+  type Project,
+  type ProjectInput,
   type NewTransaction,
   type Transaction,
   type TransactionMutation,
@@ -72,6 +75,12 @@ function validateBudgetId(value: unknown): string | null {
   return value;
 }
 
+function validateProjectId(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string" || !UUID.test(value)) throw new ValidationError("Unknown project.");
+  return value;
+}
+
 function validateNewTransaction(input: NewTransaction): NewTransaction {
   if (!(TRANSACTION_TYPES as readonly string[]).includes(input?.type)) {
     throw new ValidationError("Pick Expense or Income.");
@@ -84,7 +93,17 @@ function validateNewTransaction(input: NewTransaction): NewTransaction {
     description: typeof input.description === "string" ? input.description.trim().slice(0, 120) : "",
     // Only spending counts against a budget line.
     budget_id: input.type === "expense" ? validateBudgetId(input.budget_id) : null,
+    project_id: validateProjectId(input.project_id),
   };
+}
+
+function validateProjects(input: ProjectInput[]): ProjectInput[] {
+  if (!Array.isArray(input) || input.length > MAX_BUDGETS) throw new ValidationError("Too many projects.");
+  return input.map((project) => {
+    const name = typeof project?.name === "string" ? project.name.trim().slice(0, 40) : "";
+    if (!name) throw new ValidationError("Every project needs a name.");
+    return { id: validateId(project.id), name };
+  });
 }
 
 function validateBudgets(input: BudgetInput[]): BudgetInput[] {
@@ -185,6 +204,54 @@ export async function setTransactionBudget(
     if (error) throw error;
 
     return { ok: true, data: normalizeTransaction(data) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** Tags (or untags) a transaction with a project. */
+export async function setTransactionProject(
+  id: string,
+  projectId: string | null,
+): Promise<ActionResult<Transaction>> {
+  try {
+    await authorize();
+    const { data, error } = await getSupabase()
+      .from("transactions")
+      .update({ project_id: validateProjectId(projectId) })
+      .eq("id", validateId(id))
+      .select(TRANSACTION_COLUMNS)
+      .single();
+    if (error) throw error;
+
+    return { ok: true, data: normalizeTransaction(data) };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** Replaces the project list with `input`, in order; removed projects untag their rows. */
+export async function saveProjects(input: ProjectInput[]): Promise<ActionResult<Project[]>> {
+  try {
+    await authorize();
+    const projects = validateProjects(input);
+    const supabase = getSupabase();
+
+    const keep = projects.map((project) => project.id);
+    const removal = supabase.from("projects").delete();
+    const { error: deleteError } = await (keep.length
+      ? removal.not("id", "in", `(${keep.join(",")})`)
+      : removal.not("id", "is", null));
+    if (deleteError) throw deleteError;
+
+    if (projects.length > 0) {
+      const { error } = await supabase
+        .from("projects")
+        .upsert(projects.map((project, position) => ({ ...project, position })), { onConflict: "id" });
+      if (error) throw error;
+    }
+
+    return { ok: true, data: await fetchProjects() };
   } catch (error) {
     return fail(error);
   }

@@ -1,4 +1,4 @@
-import type { Balances, Budget, Transaction, TransactionType, WalletType } from "@/types/finance";
+import type { Balances, Budget, Project, Transaction, TransactionType, WalletType } from "@/types/finance";
 
 export const EMPTY_BALANCES: Balances = { cash: 0, visa: 0 };
 
@@ -35,7 +35,7 @@ export function applyToBalances(balances: Balances, tx: Transaction, direction: 
 
 export type Totals = { income: number; expense: number; net: number };
 
-export function totalsFor(transactions: Transaction[]): Totals {
+export function totalsFor(transactions: Pick<Transaction, "amount" | "type">[]): Totals {
   let income = 0;
   let expense = 0;
   for (const tx of transactions) {
@@ -52,7 +52,10 @@ export function totalsFor(transactions: Transaction[]): Totals {
 export type BudgetUsage = { budget: Budget; allocated: number; spent: number };
 
 /** The columns that move pocket money: split income and pocket spending. */
-export type PlanRow = Pick<Transaction, "id" | "amount" | "type" | "budget_id" | "in_plan" | "created_at">;
+export type PlanRow = Pick<
+  Transaction,
+  "id" | "amount" | "type" | "budget_id" | "in_plan" | "project_id" | "created_at"
+>;
 
 export function isPlanRow(tx: PlanRow): boolean {
   return tx.type === "income" ? tx.in_plan === true : tx.budget_id !== null;
@@ -180,6 +183,35 @@ export function rememberedBudget(
       budgets.some((b) => b.id === tx.budget_id),
   );
   return match?.budget_id ?? null;
+}
+
+/** The project last used for a transaction of this type and description. */
+export function rememberedProject(
+  transactions: Transaction[],
+  projects: Project[],
+  type: TransactionType,
+  description: string,
+): string | null {
+  const key = description.trim().toLocaleLowerCase();
+  if (!key) return null;
+  const match = transactions.find(
+    (tx) =>
+      tx.type === type &&
+      tx.project_id &&
+      tx.description.trim().toLocaleLowerCase() === key &&
+      projects.some((p) => p.id === tx.project_id),
+  );
+  return match?.project_id ?? null;
+}
+
+export type ProjectTotals = { project: Project; month: Totals; allTime: Totals };
+
+/** Each project's income and spending in the month and over all time. */
+export function projectTotals(projects: Project[], monthRows: PlanRow[], allRows: PlanRow[]): ProjectTotals[] {
+  return projects.map((project) => {
+    const mine = (rows: PlanRow[]) => rows.filter((row) => row.project_id === project.id);
+    return { project, month: totalsFor(mine(monthRows)), allTime: totalsFor(mine(allRows)) };
+  });
 }
 
 /** Merges fetched rows into the cache, skipping ids it already has. */

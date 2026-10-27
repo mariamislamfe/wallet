@@ -12,6 +12,7 @@ import {
   buildSuggestions,
   parseAmount,
   rememberedBudget,
+  rememberedProject,
   sanitizeAmountInput,
 } from "@/lib/finance";
 import { formatMoney, formatNumber } from "@/lib/format";
@@ -20,6 +21,7 @@ import {
   WALLET_TYPES,
   type Balances,
   type Budget,
+  type Project,
   type NewTransaction,
   type Transaction,
   type TransactionType,
@@ -32,6 +34,7 @@ type Props = {
   balances: Balances;
   transactions: Transaction[];
   budgets: Budget[];
+  projects: Project[];
   onSubmit: (input: NewTransaction) => void;
 };
 
@@ -55,7 +58,7 @@ function displayAmount(text: string): string {
   return decimals === undefined ? grouped : `${grouped}.${decimals}`;
 }
 
-export function QuickEntry({ balances, transactions, budgets, onSubmit }: Props) {
+export function QuickEntry({ balances, transactions, budgets, projects, onSubmit }: Props) {
   const reduceMotion = useReducedMotion();
   const [step, setStep] = useState<Step>(0);
   const [direction, setDirection] = useState<1 | -1>(1);
@@ -65,6 +68,7 @@ export function QuickEntry({ balances, transactions, budgets, onSubmit }: Props)
   const [description, setDescription] = useState("");
   // `undefined` until the user picks a line; until then it follows the description.
   const [pickedBudget, setPickedBudget] = useState<string | null | undefined>(undefined);
+  const [pickedProject, setPickedProject] = useState<string | null | undefined>(undefined);
 
   // Whether the step being mounted should take focus.
   const focusNext = useRef(false);
@@ -93,6 +97,9 @@ export function QuickEntry({ balances, transactions, budgets, onSubmit }: Props)
         ? pickedBudget
         : rememberedBudget(transactions, budgets, text);
 
+  const projectFor = (text: string) =>
+    pickedProject !== undefined ? pickedProject : rememberedProject(transactions, projects, type, text);
+
   function submit(text = description) {
     if (amount === null) {
       go(0);
@@ -105,6 +112,7 @@ export function QuickEntry({ balances, transactions, budgets, onSubmit }: Props)
       wallet_type: wallet,
       description: text.trim().slice(0, 120),
       budget_id: budgetFor(text),
+      project_id: projectFor(text),
     });
 
     // On desktop keep the cursor in the amount field for rapid entry; on touch
@@ -114,6 +122,7 @@ export function QuickEntry({ balances, transactions, budgets, onSubmit }: Props)
     setAmountText("");
     setDescription("");
     setPickedBudget(undefined);
+    setPickedProject(undefined);
     setType("expense");
     setDirection(-1);
     setStep(0);
@@ -204,6 +213,9 @@ export function QuickEntry({ balances, transactions, budgets, onSubmit }: Props)
                 budgets={type === "expense" ? budgets : []}
                 budgetId={budgetFor(description)}
                 onBudgetChange={setPickedBudget}
+                projects={projects}
+                projectId={projectFor(description)}
+                onProjectChange={setPickedProject}
                 autoFocus={focusNext.current}
                 onEditAmount={() => go(0)}
                 onDescriptionChange={setDescription}
@@ -483,6 +495,9 @@ function DescriptionStep({
   budgets,
   budgetId,
   onBudgetChange,
+  projects,
+  projectId,
+  onProjectChange,
   autoFocus,
   onEditAmount,
   onDescriptionChange,
@@ -497,6 +512,9 @@ function DescriptionStep({
   budgets: Budget[];
   budgetId: string | null;
   onBudgetChange: (id: string | null) => void;
+  projects: Project[];
+  projectId: string | null;
+  onProjectChange: (id: string | null) => void;
   autoFocus: boolean;
   onEditAmount: () => void;
   onDescriptionChange: (value: string) => void;
@@ -554,41 +572,20 @@ function DescriptionStep({
         </button>
       </form>
 
-      {budgets.length > 0 && (
-        <div className="mt-4">
-          <p className="text-xs text-neutral-500">
-            Budget <span aria-hidden className="text-neutral-300 dark:text-neutral-600">·</span>{" "}
-            <Ar className="text-neutral-400">من أنهي بند؟</Ar>
-          </p>
-          <div
-            role="radiogroup"
-            aria-label="Budget"
-            className="-mx-5 mt-2 flex gap-1.5 overflow-x-auto px-5 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          >
-            {budgets.map((budget) => {
-              const selected = budget.id === budgetId;
-              return (
-                <button
-                  key={budget.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => onBudgetChange(selected ? null : budget.id)}
-                  className={cn(
-                    "h-8 shrink-0 rounded-full border px-3 text-[13px] transition active:scale-[0.97]",
-                    selected
-                      ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                      : "border-neutral-200 text-neutral-600 hover:border-neutral-300 dark:border-neutral-800 dark:text-neutral-400 dark:hover:border-neutral-700",
-                  )}
-                >
-                  <bdi>{budget.name}</bdi>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      <ChipGroup
+        label="Pocket"
+        labelAr="من أنهي جيب؟"
+        options={budgets}
+        selectedId={budgetId}
+        onChange={onBudgetChange}
+      />
+      <ChipGroup
+        label="Project"
+        labelAr="تبع أنهي مشروع؟"
+        options={projects}
+        selectedId={projectId}
+        onChange={onProjectChange}
+      />
 
       {suggestions.length > 0 && (
         <div
@@ -608,6 +605,58 @@ function DescriptionStep({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** A row of single-choice chips; tapping the selected chip clears it. */
+function ChipGroup({
+  label,
+  labelAr,
+  options,
+  selectedId,
+  onChange,
+}: {
+  label: string;
+  labelAr: string;
+  options: { id: string; name: string }[];
+  selectedId: string | null;
+  onChange: (id: string | null) => void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <div className="mt-4">
+      <p className="text-xs text-neutral-500">
+        {label} <span aria-hidden className="text-neutral-300 dark:text-neutral-600">·</span>{" "}
+        <Ar className="text-neutral-400">{labelAr}</Ar>
+      </p>
+      <div
+        role="radiogroup"
+        aria-label={label}
+        className="-mx-5 mt-2 flex gap-1.5 overflow-x-auto px-5 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {options.map((option) => {
+          const selected = option.id === selectedId;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onChange(selected ? null : option.id)}
+              className={cn(
+                "h-8 shrink-0 rounded-full border px-3 text-[13px] transition active:scale-[0.97]",
+                selected
+                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
+                  : "border-neutral-200 text-neutral-600 hover:border-neutral-300 dark:border-neutral-800 dark:text-neutral-400 dark:hover:border-neutral-700",
+              )}
+            >
+              <bdi>{option.name}</bdi>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

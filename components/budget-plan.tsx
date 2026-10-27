@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { CalendarDays, Check, PieChart, Plus, Trash2, X } from "lucide-react";
+import { AnimatePresence } from "framer-motion";
+import { CalendarDays, Check, PieChart, Plus, Trash2 } from "lucide-react";
 
 import { Ar } from "@/components/ar";
+import { Sheet } from "@/components/sheet";
 import { cn, uuid } from "@/lib/client";
 import {
   billStatuses,
@@ -16,8 +17,6 @@ import {
 } from "@/lib/finance";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { BUDGET_KINDS, type Budget, type BudgetInput, type BudgetKind } from "@/types/finance";
-
-const EASE = [0.22, 1, 0.36, 1] as const;
 
 const PRESETS: Omit<BudgetInput, "id">[] = [
   { name: "Charity", kind: "percent", value: 10, due_day: null },
@@ -254,19 +253,6 @@ function BudgetEditor({
   const focusLast = useRef(false);
 
   useEffect(() => {
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = previous;
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
-
-  useEffect(() => {
     if (!focusLast.current) return;
     focusLast.current = false;
     list.current?.lastElementChild?.querySelector("input")?.focus();
@@ -319,153 +305,14 @@ function BudgetEditor({
   );
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center sm:items-center sm:p-6">
-      <motion.div
-        aria-hidden
-        className="absolute inset-0 bg-neutral-950/40 backdrop-blur-[2px]"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
-        onClick={onClose}
-      />
-      <motion.div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="plan-editor-title"
-        initial={{ y: 32, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 24, opacity: 0 }}
-        transition={{ duration: 0.26, ease: EASE }}
-        className="relative flex max-h-[88dvh] w-full max-w-xl flex-col rounded-t-3xl border border-neutral-200 bg-white shadow-[0_-12px_40px_-20px_rgba(0,0,0,0.35)] sm:rounded-3xl dark:border-neutral-800 dark:bg-neutral-900"
-      >
-        <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-2">
-          <div>
-            <h2 id="plan-editor-title" className="text-lg font-semibold tracking-tight">
-              Monthly plan <Ar className="ms-1 text-base font-normal text-neutral-400">التقسيمة</Ar>
-            </h2>
-            <p className="text-xs text-neutral-500">% lines are a share of each month&apos;s income.</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="-me-2 flex size-9 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-          >
-            <X className="size-4" strokeWidth={1.75} />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto overscroll-contain px-5 pb-4">
-          <ul ref={list} className="space-y-3">
-            {drafts.map((draft) => (
-              <li
-                key={draft.id}
-                className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-800/40"
-              >
-                <div className="flex items-center gap-2">
-                  <input
-                    dir="auto"
-                    value={draft.name}
-                    maxLength={40}
-                    placeholder="Name, e.g. Charity"
-                    aria-label="Line name"
-                    onChange={(event) => update(draft.id, { name: event.target.value })}
-                    className="h-10 min-w-0 flex-1 rounded-lg border border-transparent bg-white px-3 text-base outline-none transition placeholder:text-neutral-400 focus:border-neutral-300 dark:bg-neutral-900 dark:focus:border-neutral-700"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setDrafts((current) => current.filter((d) => d.id !== draft.id))}
-                    aria-label={`Remove ${draft.name || "line"}`}
-                    className="flex size-10 shrink-0 items-center justify-center rounded-lg text-neutral-400 transition hover:bg-white hover:text-red-500 dark:hover:bg-neutral-900"
-                  >
-                    <Trash2 className="size-4" strokeWidth={1.5} />
-                  </button>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <div
-                    role="radiogroup"
-                    aria-label="Type"
-                    className="grid shrink-0 grid-cols-2 rounded-lg border border-neutral-200 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-900"
-                  >
-                    {BUDGET_KINDS.map((kind) => (
-                      <button
-                        key={kind}
-                        type="button"
-                        role="radio"
-                        aria-checked={draft.kind === kind}
-                        onClick={() => update(draft.id, { kind })}
-                        className={cn(
-                          "h-8 rounded-md px-3 text-[13px] font-medium transition",
-                          draft.kind === kind
-                            ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
-                            : "text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100",
-                        )}
-                      >
-                        {kind === "percent" ? "%" : "EGP"}
-                      </button>
-                    ))}
-                  </div>
-                  <label className="flex h-10 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-white px-3 dark:bg-neutral-900">
-                    <input
-                      inputMode="decimal"
-                      value={draft.value}
-                      placeholder="0"
-                      aria-label={draft.kind === "percent" ? "Percent of income" : "Amount in EGP"}
-                      onChange={(event) => update(draft.id, { value: sanitizeAmountInput(event.target.value) })}
-                      className="min-w-0 flex-1 bg-transparent text-base font-medium tabular-nums outline-none placeholder:text-neutral-300 dark:placeholder:text-neutral-600"
-                    />
-                    <span className="shrink-0 text-sm text-neutral-400">
-                      {draft.kind === "percent" ? "of income" : "/ month"}
-                    </span>
-                  </label>
-                </div>
-                {draft.kind === "fixed" && (
-                  <label className="mt-2 flex h-10 items-center gap-2 rounded-lg bg-white px-3 text-sm text-neutral-500 dark:bg-neutral-900">
-                    <CalendarDays className="size-4 shrink-0" strokeWidth={1.5} />
-                    <span className="shrink-0">
-                      Pay day <Ar className="text-neutral-400">يوم الدفع</Ar>
-                    </span>
-                    <input
-                      inputMode="numeric"
-                      value={draft.dueDay}
-                      placeholder="—"
-                      aria-label="Day of the month it's paid (optional)"
-                      onChange={(event) => update(draft.id, { dueDay: event.target.value.replace(/\D/g, "").slice(0, 2) })}
-                      className="min-w-0 flex-1 bg-transparent text-end text-base font-medium text-neutral-900 tabular-nums outline-none placeholder:text-neutral-300 dark:text-neutral-100 dark:placeholder:text-neutral-600"
-                    />
-                  </label>
-                )}
-              </li>
-            ))}
-          </ul>
-
-          <button
-            type="button"
-            onClick={() => add()}
-            className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-neutral-300 text-sm font-medium text-neutral-600 transition hover:border-neutral-400 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-100"
-          >
-            <Plus className="size-4" strokeWidth={1.75} />
-            Add line <Ar className="font-normal text-neutral-400">بند جديد</Ar>
-          </button>
-
-          {unusedPresets.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {unusedPresets.map((preset) => (
-                <button
-                  key={preset.name}
-                  type="button"
-                  onClick={() => add(preset)}
-                  className="h-8 rounded-full border border-neutral-200 px-3 text-[13px] text-neutral-600 transition hover:border-neutral-300 hover:bg-neutral-50 dark:border-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-800"
-                >
-                  + {preset.name} {shareLabel(preset)}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-neutral-100 px-5 pt-3 pb-[calc(env(safe-area-inset-bottom)+1rem)] dark:border-neutral-800">
+    <Sheet
+      id="plan-editor-title"
+      title="Monthly plan"
+      titleAr="التقسيمة"
+      subtitle="% pockets fill from each income you split and carry over; fixed ones restart monthly."
+      onClose={onClose}
+      footer={
+        <>
           <p className="text-xs text-neutral-500 tabular-nums">
             {percentTotal > 0 && `${formatNumber(percentTotal)}% of income`}
             {percentTotal > 0 && fixedTotal > 0 && " + "}
@@ -484,8 +331,115 @@ function BudgetEditor({
           >
             {saving ? "Saving…" : "Save plan"}
           </button>
+        </>
+      }
+    >
+      <ul ref={list} className="space-y-3">
+        {drafts.map((draft) => (
+          <li
+            key={draft.id}
+            className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-800/40"
+          >
+            <div className="flex items-center gap-2">
+              <input
+                dir="auto"
+                value={draft.name}
+                maxLength={40}
+                placeholder="Name, e.g. Charity"
+                aria-label="Line name"
+                onChange={(event) => update(draft.id, { name: event.target.value })}
+                className="h-10 min-w-0 flex-1 rounded-lg border border-transparent bg-white px-3 text-base outline-none transition placeholder:text-neutral-400 focus:border-neutral-300 dark:bg-neutral-900 dark:focus:border-neutral-700"
+              />
+              <button
+                type="button"
+                onClick={() => setDrafts((current) => current.filter((d) => d.id !== draft.id))}
+                aria-label={`Remove ${draft.name || "line"}`}
+                className="flex size-10 shrink-0 items-center justify-center rounded-lg text-neutral-400 transition hover:bg-white hover:text-red-500 dark:hover:bg-neutral-900"
+              >
+                <Trash2 className="size-4" strokeWidth={1.5} />
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <div
+                role="radiogroup"
+                aria-label="Type"
+                className="grid shrink-0 grid-cols-2 rounded-lg border border-neutral-200 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-900"
+              >
+                {BUDGET_KINDS.map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    role="radio"
+                    aria-checked={draft.kind === kind}
+                    onClick={() => update(draft.id, { kind })}
+                    className={cn(
+                      "h-8 rounded-md px-3 text-[13px] font-medium transition",
+                      draft.kind === kind
+                        ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+                        : "text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100",
+                    )}
+                  >
+                    {kind === "percent" ? "%" : "EGP"}
+                  </button>
+                ))}
+              </div>
+              <label className="flex h-10 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-white px-3 dark:bg-neutral-900">
+                <input
+                  inputMode="decimal"
+                  value={draft.value}
+                  placeholder="0"
+                  aria-label={draft.kind === "percent" ? "Percent of income" : "Amount in EGP"}
+                  onChange={(event) => update(draft.id, { value: sanitizeAmountInput(event.target.value) })}
+                  className="min-w-0 flex-1 bg-transparent text-base font-medium tabular-nums outline-none placeholder:text-neutral-300 dark:placeholder:text-neutral-600"
+                />
+                <span className="shrink-0 text-sm text-neutral-400">
+                  {draft.kind === "percent" ? "of income" : "/ month"}
+                </span>
+              </label>
+            </div>
+            {draft.kind === "fixed" && (
+              <label className="mt-2 flex h-10 items-center gap-2 rounded-lg bg-white px-3 text-sm text-neutral-500 dark:bg-neutral-900">
+                <CalendarDays className="size-4 shrink-0" strokeWidth={1.5} />
+                <span className="shrink-0">
+                  Pay day <Ar className="text-neutral-400">يوم الدفع</Ar>
+                </span>
+                <input
+                  inputMode="numeric"
+                  value={draft.dueDay}
+                  placeholder="—"
+                  aria-label="Day of the month it's paid (optional)"
+                  onChange={(event) => update(draft.id, { dueDay: event.target.value.replace(/\D/g, "").slice(0, 2) })}
+                  className="min-w-0 flex-1 bg-transparent text-end text-base font-medium text-neutral-900 tabular-nums outline-none placeholder:text-neutral-300 dark:text-neutral-100 dark:placeholder:text-neutral-600"
+                />
+              </label>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <button
+        type="button"
+        onClick={() => add()}
+        className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-neutral-300 text-sm font-medium text-neutral-600 transition hover:border-neutral-400 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-100"
+      >
+        <Plus className="size-4" strokeWidth={1.75} />
+        Add line <Ar className="font-normal text-neutral-400">بند جديد</Ar>
+      </button>
+
+      {unusedPresets.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {unusedPresets.map((preset) => (
+            <button
+              key={preset.name}
+              type="button"
+              onClick={() => add(preset)}
+              className="h-8 rounded-full border border-neutral-200 px-3 text-[13px] text-neutral-600 transition hover:border-neutral-300 hover:bg-neutral-50 dark:border-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-800"
+            >
+              + {preset.name} {shareLabel(preset)}
+            </button>
+          ))}
         </div>
-      </motion.div>
-    </div>
+      )}
+    </Sheet>
   );
 }

@@ -3,10 +3,11 @@ import "server-only";
 import { getSupabase } from "@/lib/supabase";
 import { EMPTY_BALANCES } from "@/lib/finance";
 import type { PlanRow } from "@/lib/finance";
-import type { Balances, Budget, Transaction, Wallet } from "@/types/finance";
+import type { Balances, Budget, Project, Transaction, Wallet } from "@/types/finance";
 
-export const TRANSACTION_COLUMNS = "id, amount, type, wallet_type, description, budget_id, source, in_plan, created_at";
+export const TRANSACTION_COLUMNS = "id, amount, type, wallet_type, description, budget_id, source, in_plan, project_id, created_at";
 export const BUDGET_COLUMNS = "id, name, kind, value, position, due_day";
+export const PROJECT_COLUMNS = "id, name, position";
 
 // PostgREST may serialise `numeric` as strings depending on precision; coerce defensively.
 export function normalizeTransaction(row: Transaction): Transaction {
@@ -51,13 +52,16 @@ export async function fetchTransactions(from: Date, to?: Date): Promise<Transact
   return data.map(normalizeTransaction);
 }
 
-/** Split income and pocket spending from before `before`: what % pockets carry into it. */
+/**
+ * Rows from before `before` that still count today: split income and pocket
+ * spending (what % pockets carry forward) and anything tagged with a project.
+ */
 export async function fetchPlanHistory(before: Date): Promise<PlanRow[]> {
   const { data, error } = await getSupabase()
     .from("transactions")
-    .select("id, amount, type, budget_id, in_plan, created_at")
+    .select("id, amount, type, budget_id, in_plan, project_id, created_at")
     .lt("created_at", before.toISOString())
-    .or("in_plan.is.true,budget_id.not.is.null");
+    .or("in_plan.is.true,budget_id.not.is.null,project_id.not.is.null");
   if (error) throw new Error(error.message);
   return data.map((row) => ({ ...row, amount: Number(row.amount) }));
 }
@@ -82,4 +86,14 @@ export async function fetchBudgets(): Promise<Budget[]> {
     .order("created_at");
   if (error) throw new Error(error.message);
   return data.map(normalizeBudget);
+}
+
+export async function fetchProjects(): Promise<Project[]> {
+  const { data, error } = await getSupabase()
+    .from("projects")
+    .select(PROJECT_COLUMNS)
+    .order("position")
+    .order("created_at");
+  if (error) throw new Error(error.message);
+  return data;
 }
