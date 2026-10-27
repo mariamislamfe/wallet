@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabase } from "@/lib/supabase";
+import type { Db } from "@/lib/supabase";
 import { EMPTY_BALANCES } from "@/lib/finance";
 import type { PlanRow } from "@/lib/finance";
 import type { Balances, Budget, Project, Transaction, Wallet } from "@/types/finance";
@@ -24,8 +24,8 @@ function toBalances(rows: Pick<Wallet, "type" | "balance">[]): Balances {
   return balances;
 }
 
-export async function fetchBalances(): Promise<Balances> {
-  const { data, error } = await getSupabase().from("wallets").select("type, balance");
+export async function fetchBalances({ client, userId }: Db): Promise<Balances> {
+  const { data, error } = await client.from("wallets").select("type, balance").eq("user_id", userId);
   if (error) throw new Error(error.message);
   return toBalances(data);
 }
@@ -40,10 +40,11 @@ export function initialWindowStart(now = new Date()): Date {
 }
 
 /** Transactions with `from <= created_at < to` (no upper bound when `to` is omitted), newest first. */
-export async function fetchTransactions(from: Date, to?: Date): Promise<Transaction[]> {
-  let query = getSupabase()
+export async function fetchTransactions({ client, userId }: Db, from: Date, to?: Date): Promise<Transaction[]> {
+  let query = client
     .from("transactions")
     .select(TRANSACTION_COLUMNS)
+    .eq("user_id", userId)
     .gte("created_at", from.toISOString());
   if (to) query = query.lt("created_at", to.toISOString());
 
@@ -56,10 +57,11 @@ export async function fetchTransactions(from: Date, to?: Date): Promise<Transact
  * Rows from before `before` that still count today: split income and pocket
  * spending (what % pockets carry forward) and anything tagged with a project.
  */
-export async function fetchPlanHistory(before: Date): Promise<PlanRow[]> {
-  const { data, error } = await getSupabase()
+export async function fetchPlanHistory({ client, userId }: Db, before: Date): Promise<PlanRow[]> {
+  const { data, error } = await client
     .from("transactions")
     .select("id, amount, type, budget_id, in_plan, project_id, created_at")
+    .eq("user_id", userId)
     .lt("created_at", before.toISOString())
     .or("in_plan.is.true,budget_id.not.is.null,project_id.not.is.null");
   if (error) throw new Error(error.message);
@@ -67,10 +69,11 @@ export async function fetchPlanHistory(before: Date): Promise<PlanRow[]> {
 }
 
 /** When the very first transaction was logged — bounds how far back the month picker goes. */
-export async function fetchFirstTransactionAt(): Promise<string | null> {
-  const { data, error } = await getSupabase()
+export async function fetchFirstTransactionAt({ client, userId }: Db): Promise<string | null> {
+  const { data, error } = await client
     .from("transactions")
     .select("created_at")
+    .eq("user_id", userId)
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -78,22 +81,33 @@ export async function fetchFirstTransactionAt(): Promise<string | null> {
   return data?.created_at ?? null;
 }
 
-export async function fetchBudgets(): Promise<Budget[]> {
-  const { data, error } = await getSupabase()
+export async function fetchBudgets({ client, userId }: Db): Promise<Budget[]> {
+  const { data, error } = await client
     .from("budgets")
     .select(BUDGET_COLUMNS)
+    .eq("user_id", userId)
     .order("position")
     .order("created_at");
   if (error) throw new Error(error.message);
   return data.map(normalizeBudget);
 }
 
-export async function fetchProjects(): Promise<Project[]> {
-  const { data, error } = await getSupabase()
+export async function fetchProjects({ client, userId }: Db): Promise<Project[]> {
+  const { data, error } = await client
     .from("projects")
     .select(PROJECT_COLUMNS)
+    .eq("user_id", userId)
     .order("position")
     .order("created_at");
   if (error) throw new Error(error.message);
   return data;
+}
+
+export async function hasSmsToken({ client, userId }: Db): Promise<boolean> {
+  const { count, error } = await client
+    .from("sms_tokens")
+    .select("user_id", { count: "exact", head: true })
+    .eq("user_id", userId);
+  if (error) throw new Error(error.message);
+  return (count ?? 0) > 0;
 }

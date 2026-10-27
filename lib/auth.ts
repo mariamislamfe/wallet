@@ -1,30 +1,16 @@
-// Shared by middleware (Edge runtime) and server actions (Node), so it only
-// relies on Web Crypto.
+// Shared by middleware (Edge runtime) and the server, so no Node-only imports.
 
-export const SESSION_COOKIE = "wallet_session";
-export const SESSION_MAX_AGE = 60 * 60 * 24 * 365;
-
-export function getPasscode(): string | null {
-  const passcode = process.env.APP_PASSCODE?.trim();
-  return passcode ? passcode : null;
+/** Paths that work without signing in. /api/sms authenticates with its own bearer token. */
+export function isPublicPath(pathname: string): boolean {
+  return pathname === "/login" || pathname.startsWith("/auth/") || pathname === "/api/sms";
 }
 
-export async function sessionToken(passcode: string): Promise<string> {
-  const bytes = new TextEncoder().encode(`wallet-session:v1:${passcode}`);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-export function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-export async function isValidSession(token: string | undefined): Promise<boolean> {
-  const passcode = getPasscode();
-  if (!passcode) return true;
-  if (!token) return false;
-  return safeEqual(token, await sessionToken(passcode));
+/** URL and publishable (anon) key for acting as the signed-in user. */
+export function authKeys(): { url: string; key: string } {
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) {
+    throw new Error("Missing SUPABASE_URL or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY. Add both to .env.local.");
+  }
+  return { url, key };
 }

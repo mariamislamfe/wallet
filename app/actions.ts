@@ -1,8 +1,8 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { createHash, randomBytes } from "node:crypto";
+import { redirect } from "next/navigation";
 
-import { SESSION_COOKIE, isValidSession } from "@/lib/auth";
 import {
   TRANSACTION_COLUMNS,
   fetchBalances,
@@ -12,7 +12,7 @@ import {
   normalizeTransaction,
 } from "@/lib/data";
 import { round2 } from "@/lib/finance";
-import { getSupabase } from "@/lib/supabase";
+import { getAuthClient, getSession, type Session } from "@/lib/session";
 import {
   BUDGET_KINDS,
   TRANSACTION_TYPES,
@@ -35,11 +35,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 class ValidationError extends Error {}
 
-async function authorize(): Promise<void> {
-  const store = await cookies();
-  if (!(await isValidSession(store.get(SESSION_COOKIE)?.value))) {
-    throw new ValidationError("Session expired. Reload and enter your passcode.");
-  }
+async function authorize(): Promise<Session> {
+  const session = await getSession();
+  if (!session) throw new ValidationError("Signed out. Reload and sign in again.");
+  return session;
 }
 
 function fail(error: unknown): { ok: false; error: string } {
@@ -126,17 +125,17 @@ export async function addTransaction(
   input: NewTransaction,
 ): Promise<ActionResult<TransactionMutation>> {
   try {
-    await authorize();
+    const db = await authorize();
     const values = validateNewTransaction(input);
 
-    const { data, error } = await getSupabase()
+    const { data, error } = await db.client
       .from("transactions")
-      .insert(values)
+      .insert({ ...values, user_id: db.userId })
       .select(TRANSACTION_COLUMNS)
       .single();
     if (error) throw error;
 
-    return { ok: true, data: { transaction: normalizeTransaction(data), balances: await fetchBalances() } };
+    return { ok: true, data: { transaction: normalizeTransaction(data), balances: await fetchBalances(db) } };
   } catch (error) {
     return fail(error);
   }
@@ -144,11 +143,15 @@ export async function addTransaction(
 
 export async function deleteTransaction(id: string): Promise<ActionResult<BalanceMutation>> {
   try {
-    await authorize();
-    const { error } = await getSupabase().from("transactions").delete().eq("id", validateId(id));
+    const db = await authorize();
+    const { error } = await db.client
+      .from("transactions")
+      .delete()
+      .eq("user_id", db.userId)
+      .eq("id", validateId(id));
     if (error) throw error;
 
-    return { ok: true, data: { balances: await fetchBalances() } };
+    return { ok: true, data: { balances: await fetchBalances(db) } };
   } catch (error) {
     return fail(error);
   }
@@ -159,15 +162,16 @@ export async function restoreTransaction(
   tx: Transaction,
 ): Promise<ActionResult<TransactionMutation>> {
   try {
-    await authorize();
+    const db = await authorize();
     const createdAt = new Date(tx.created_at);
     if (Number.isNaN(createdAt.getTime())) throw new ValidationError("Invalid date.");
 
-    const { data, error } = await getSupabase()
+    const { data, error } = await db.client
       .from("transactions")
       .upsert(
         {
           ...validateNewTransaction(tx),
+          user_id: db.userId,
           source: tx.source === "sms" ? "sms" : "manual",
           in_plan: tx.type === "income" && typeof tx.in_plan === "boolean" ? tx.in_plan : null,
           created_at: createdAt.toISOString(),
@@ -180,7 +184,7 @@ export async function restoreTransaction(
 
     return {
       ok: true,
-      data: { transaction: data ? normalizeTransaction(data) : tx, balances: await fetchBalances() },
+      data: { transaction: data ? normalizeTransaction(data) : tx, balances: await fetchBalances(db) },
     };
   } catch (error) {
     return fail(error);
@@ -193,10 +197,11 @@ export async function setTransactionBudget(
   budgetId: string | null,
 ): Promise<ActionResult<Transaction>> {
   try {
-    await authorize();
-    const { data, error } = await getSupabase()
+    const db = await authorize();
+    const { data, error } = await db.client
       .from("transactions")
       .update({ budget_id: validateBudgetId(budgetId) })
+      .eq("user_id", db.userId)
       .eq("id", validateId(id))
       .eq("type", "expense")
       .select(TRANSACTION_COLUMNS)
@@ -215,10 +220,11 @@ export async function setTransactionProject(
   projectId: string | null,
 ): Promise<ActionResult<Transaction>> {
   try {
-    await authorize();
-    const { data, error } = await getSupabase()
+    const db = await authorize();
+    const { data, error } = await db.client
       .from("transactions")
       .update({ project_id: validateProjectId(projectId) })
+      .eq("user_id", db.userId)
       .eq("id", validateId(id))
       .select(TRANSACTION_COLUMNS)
       .single();
@@ -233,25 +239,26 @@ export async function setTransactionProject(
 /** Replaces the project list with `input`, in order; removed projects untag their rows. */
 export async function saveProjects(input: ProjectInput[]): Promise<ActionResult<Project[]>> {
   try {
-    await authorize();
+    const db = await authorize();
     const projects = validateProjects(input);
-    const supabase = getSupabase();
-
     const keep = projects.map((project) => project.id);
-    const removal = supabase.from("projects").delete();
+    const removal = db.client.from("projects").delete().eq("user_id", db.userId);
     const { error: deleteError } = await (keep.length
       ? removal.not("id", "in", `(${keep.join(",")})`)
       : removal.not("id", "is", null));
     if (deleteError) throw deleteError;
 
     if (projects.length > 0) {
-      const { error } = await supabase
+      const { error } = await db.client
         .from("projects")
-        .upsert(projects.map((project, position) => ({ ...project, position })), { onConflict: "id" });
+        .upsert(
+          projects.map((project, position) => ({ ...project, position, user_id: db.userId })),
+          { onConflict: "id" },
+        );
       if (error) throw error;
     }
 
-    return { ok: true, data: await fetchProjects() };
+    return { ok: true, data: await fetchProjects(db) };
   } catch (error) {
     return fail(error);
   }
@@ -263,11 +270,12 @@ export async function setIncomeInPlan(
   inPlan: boolean | null,
 ): Promise<ActionResult<Transaction>> {
   try {
-    await authorize();
+    const db = await authorize();
     if (inPlan !== null && typeof inPlan !== "boolean") throw new ValidationError("Pick yes or no.");
-    const { data, error } = await getSupabase()
+    const { data, error } = await db.client
       .from("transactions")
       .update({ in_plan: inPlan })
+      .eq("user_id", db.userId)
       .eq("id", validateId(id))
       .eq("type", "income")
       .select(TRANSACTION_COLUMNS)
@@ -286,25 +294,26 @@ export async function setIncomeInPlan(
  */
 export async function saveBudgets(input: BudgetInput[]): Promise<ActionResult<Budget[]>> {
   try {
-    await authorize();
+    const db = await authorize();
     const lines = validateBudgets(input);
-    const supabase = getSupabase();
-
     const keep = lines.map((line) => line.id);
-    const removal = supabase.from("budgets").delete();
+    const removal = db.client.from("budgets").delete().eq("user_id", db.userId);
     const { error: deleteError } = await (keep.length
       ? removal.not("id", "in", `(${keep.join(",")})`)
       : removal.not("id", "is", null));
     if (deleteError) throw deleteError;
 
     if (lines.length > 0) {
-      const { error } = await supabase
+      const { error } = await db.client
         .from("budgets")
-        .upsert(lines.map((line, position) => ({ ...line, position })), { onConflict: "id" });
+        .upsert(
+          lines.map((line, position) => ({ ...line, position, user_id: db.userId })),
+          { onConflict: "id" },
+        );
       if (error) throw error;
     }
 
-    return { ok: true, data: await fetchBudgets() };
+    return { ok: true, data: await fetchBudgets(db) };
   } catch (error) {
     return fail(error);
   }
@@ -313,14 +322,14 @@ export async function saveBudgets(input: BudgetInput[]): Promise<ActionResult<Bu
 /** Fetches an older slice of history when the user pages back to a month not loaded yet. */
 export async function loadTransactions(from: string, to: string): Promise<ActionResult<Transaction[]>> {
   try {
-    await authorize();
+    const db = await authorize();
     const start = new Date(from);
     const end = new Date(to);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start >= end) {
       throw new ValidationError("Invalid date range.");
     }
 
-    return { ok: true, data: await fetchTransactions(start, end) };
+    return { ok: true, data: await fetchTransactions(db, start, end) };
   } catch (error) {
     return fail(error);
   }
@@ -331,17 +340,50 @@ export async function setWalletBalance(
   balance: number,
 ): Promise<ActionResult<BalanceMutation>> {
   try {
-    await authorize();
+    const db = await authorize();
     const type = validateWallet(wallet);
     const value = validateAmount(balance, { allowZeroOrNegative: true });
 
-    const { error } = await getSupabase()
+    const { error } = await db.client
       .from("wallets")
-      .upsert({ type, balance: value, updated_at: new Date().toISOString() }, { onConflict: "type" });
+      .upsert(
+        { user_id: db.userId, type, balance: value, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,type" },
+      );
     if (error) throw error;
 
-    return { ok: true, data: { balances: await fetchBalances() } };
+    return { ok: true, data: { balances: await fetchBalances(db) } };
   } catch (error) {
     return fail(error);
   }
+}
+
+/**
+ * Makes a new bank SMS token for the iPhone Shortcut, replacing the old one.
+ * Only its hash is stored, so this is the one time the token is shown.
+ */
+export async function createSmsToken(): Promise<ActionResult<string>> {
+  try {
+    const db = await authorize();
+    const token = randomBytes(24).toString("base64url");
+    const { error } = await db.client.from("sms_tokens").upsert(
+      {
+        user_id: db.userId,
+        token_hash: createHash("sha256").update(token).digest("hex"),
+        created_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    if (error) throw error;
+
+    return { ok: true, data: token };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+export async function signOut(): Promise<void> {
+  const client = await getAuthClient();
+  await client.auth.signOut();
+  redirect("/login");
 }

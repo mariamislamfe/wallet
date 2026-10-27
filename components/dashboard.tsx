@@ -16,6 +16,7 @@ import {
   setTransactionProject,
   setWalletBalance,
 } from "@/app/actions";
+import { AccountButton, AccountSheet, type Account } from "@/components/account";
 import { Ar } from "@/components/ar";
 import { ActivityFeed, FeedSkeleton } from "@/components/activity-feed";
 import { BalanceOverview } from "@/components/balance-overview";
@@ -105,6 +106,7 @@ type Props = {
   /** Split income and pocket spending from before `initialLoadedFrom`. */
   planHistory: PlanRow[];
   initialProjects: Project[];
+  account: Account;
 };
 
 export function Dashboard({
@@ -115,6 +117,7 @@ export function Dashboard({
   initialBudgets,
   planHistory,
   initialProjects,
+  account,
 }: Props) {
   // `confirmed` mirrors the database; `view` layers in-flight optimistic changes on top.
   const [confirmed, setConfirmed] = useState<FinanceState>({
@@ -124,6 +127,8 @@ export function Dashboard({
   const [view, applyOptimistic] = useOptimistic(confirmed, reduce);
   const [, startTransition] = useTransition();
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const closeAccount = useCallback(() => setAccountOpen(false), []);
 
   const [budgets, setBudgets] = useState(initialBudgets);
   const [projects, setProjects] = useState(initialProjects);
@@ -465,6 +470,7 @@ export function Dashboard({
           </span>
           <span className="text-[15px] font-semibold tracking-tight">Wallet</span>
           <Ar className="text-sm text-neutral-400">محفظتي</Ar>
+          <AccountButton email={account.email} onClick={() => setAccountOpen(true)} />
         </header>
 
         <AnimatePresence mode="wait" initial={false} custom={pageDirection}>
@@ -599,6 +605,7 @@ export function Dashboard({
 
       <TabBar tab={tab} onChange={openTab} dots={undecided.length > 0 && budgets.length > 0 ? POCKETS_DOT : undefined} />
       <Toast toast={toast} onDismiss={dismissToast} onUndo={handleRestore} />
+      <AnimatePresence>{accountOpen && <AccountSheet account={account} onClose={closeAccount} />}</AnimatePresence>
     </>
   );
 }

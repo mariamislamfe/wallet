@@ -71,9 +71,10 @@ export type Database = {
   public: {
     Tables: {
       wallets: {
-        Row: Wallet;
+        Row: Wallet & { user_id: string | null };
         Insert: {
           id?: string;
+          user_id?: string;
           type: WalletType;
           balance?: number;
           updated_at?: string;
@@ -87,9 +88,10 @@ export type Database = {
         Relationships: [];
       };
       transactions: {
-        Row: Transaction;
+        Row: Transaction & { user_id: string | null; source_hash: string | null };
         Insert: {
           id?: string;
+          user_id?: string;
           amount: number;
           type: TransactionType;
           wallet_type: WalletType;
@@ -117,9 +119,10 @@ export type Database = {
         Relationships: [];
       };
       budgets: {
-        Row: Budget & { created_at: string };
+        Row: Budget & { user_id: string | null; created_at: string };
         Insert: {
           id?: string;
+          user_id?: string;
           name: string;
           kind: BudgetKind;
           value: number;
@@ -139,9 +142,15 @@ export type Database = {
         Relationships: [];
       };
       projects: {
-        Row: Project & { created_at: string };
-        Insert: { id?: string; name: string; position?: number; created_at?: string };
+        Row: Project & { user_id: string | null; created_at: string };
+        Insert: { id?: string; user_id?: string; name: string; position?: number; created_at?: string };
         Update: { id?: string; name?: string; position?: number; created_at?: string };
+        Relationships: [];
+      };
+      sms_tokens: {
+        Row: { user_id: string; token_hash: string; created_at: string };
+        Insert: { user_id?: string; token_hash: string; created_at?: string };
+        Update: { user_id?: string; token_hash?: string; created_at?: string };
         Relationships: [];
       };
     };

@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
-import { safeEqual } from "@/lib/auth";
 import {
   TRANSACTION_COLUMNS,
   fetchBalances,
@@ -13,16 +12,18 @@ import {
 import { planFor, round2 } from "@/lib/finance";
 import { formatMoney, formatSignedMoney } from "@/lib/format";
 import { parseBankSms } from "@/lib/sms";
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase, type Db } from "@/lib/supabase";
 import type { Transaction } from "@/types/finance";
 
 // Receives bank SMS forwarded by an iPhone Shortcuts automation and records
-// them on the Visa wallet. Authenticated by its own bearer token (the
-// passcode cookie can't be sent from Shortcuts), so middleware lets it through.
+// them on the Visa wallet. Each account has its own bearer token (Shortcuts
+// can't sign in), so middleware lets it through and the token picks the account.
 
 export const dynamic = "force-dynamic";
 
 const MAX_LENGTH = 1000;
+/** 24 random bytes in base64url, as made by `createSmsToken`. */
+const TOKEN_LENGTH = 32;
 
 // Months for the notification follow the phone's clock, which is in Egypt.
 const cairoMonth = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit" });
@@ -39,17 +40,17 @@ function reply(status: number, body: { status: string; message: string; [key: st
  * Second notification line: income asks to be split; spending from a pocket
  * shows what's left in it, other spending shows what can still be used.
  */
-async function monthLine(tx: Transaction): Promise<string> {
+async function monthLine(db: Db, tx: Transaction): Promise<string> {
   if (tx.type === "income") return "دخل جديد: افتحي التطبيق وقرري يدخل في التقسيمة ولا لأ";
 
   const now = new Date();
   const month = cairoMonth.format(now);
   const windowStart = new Date(now.getTime() - 32 * 86_400_000);
   const [recent, older, budgets, balances] = await Promise.all([
-    fetchTransactions(windowStart),
-    fetchPlanHistory(windowStart),
-    fetchBudgets(),
-    fetchBalances(),
+    fetchTransactions(db, windowStart),
+    fetchPlanHistory(db, windowStart),
+    fetchBudgets(db),
+    fetchBalances(db),
   ]);
   const inMonth = recent.filter((row) => cairoMonth.format(new Date(row.created_at)) === month);
   const before = [...older, ...recent.filter((row) => cairoMonth.format(new Date(row.created_at)) !== month)];
@@ -78,18 +79,35 @@ async function readText(request: Request): Promise<string> {
   return raw;
 }
 
-export async function POST(request: Request) {
-  const token = process.env.SMS_INGEST_TOKEN?.trim();
-  if (!token) return reply(503, { status: "error", message: "SMS import is off: set SMS_INGEST_TOKEN." });
+/** The account whose token this is, or null. */
+async function tokenOwner(token: string): Promise<string | null> {
+  if (!token) return null;
+  const { data, error } = await getSupabase()
+    .from("sms_tokens")
+    .select("user_id")
+    .eq("token_hash", sha256(token))
+    .maybeSingle();
+  if (error) throw error;
+  return data?.user_id ?? null;
+}
 
+export async function POST(request: Request) {
   // Tokens pasted on a phone often pick up invisible direction marks, quotes or spaces.
   // The token is base64url, so anything outside that alphabet is noise.
   const given = (request.headers.get("authorization") ?? "")
     .replace(/[^A-Za-z0-9_-]/g, "")
     .replace(/^(?:Bearer)+/i, "");
-  if (!safeEqual(sha256(given), sha256(token))) {
+
+  let userId: string | null;
+  try {
+    userId = await tokenOwner(given);
+  } catch (error) {
+    console.error("[wallet] sms token lookup failed:", error);
+    return reply(500, { status: "error", message: "Couldn't reach the database." });
+  }
+  if (!userId) {
     const hint = given
-      ? `got ${given.length} characters, expected ${token.length}`
+      ? `got ${given.length} characters; tokens are ${TOKEN_LENGTH}. Make a new one in the app: Account → Bank SMS`
       : request.headers.has("authorization")
         ? "Authorization header has no token after Bearer"
         : "no Authorization header";
@@ -106,7 +124,9 @@ export async function POST(request: Request) {
   const parsed = parseBankSms(text);
   if (!parsed.ok) return reply(200, { status: "skipped", message: `Skipped: ${parsed.reason}` });
 
-  const supabase = getSupabase();
+  // The service-role client skips RLS, so every query below filters by the token's owner.
+  const db: Db = { client: getSupabase(), userId };
+  const supabase = db.client;
   const description = parsed.merchant ?? (parsed.type === "expense" ? "Card purchase" : "Card deposit");
 
   try {
@@ -117,6 +137,7 @@ export async function POST(request: Request) {
       const { data, error } = await supabase
         .from("transactions")
         .select("project_id")
+        .eq("user_id", userId)
         .eq("type", parsed.type)
         .eq("description", description)
         .not("project_id", "is", null)
@@ -130,6 +151,7 @@ export async function POST(request: Request) {
       const { data, error } = await supabase
         .from("transactions")
         .select("budget_id")
+        .eq("user_id", userId)
         .eq("type", "expense")
         .eq("description", description)
         .not("budget_id", "is", null)
@@ -144,6 +166,7 @@ export async function POST(request: Request) {
       .from("transactions")
       .upsert(
         {
+          user_id: userId,
           amount: parsed.amount,
           type: parsed.type,
           wallet_type: "visa",
@@ -153,7 +176,7 @@ export async function POST(request: Request) {
           source: "sms",
           source_hash: sha256(text),
         },
-        { onConflict: "source_hash", ignoreDuplicates: true },
+        { onConflict: "user_id,source_hash", ignoreDuplicates: true },
       )
       .select(TRANSACTION_COLUMNS)
       .maybeSingle();
@@ -164,7 +187,7 @@ export async function POST(request: Request) {
     const tx = normalizeTransaction(data);
     const message = `${formatSignedMoney(tx)} · ${tx.description}`;
     // The summary line is a nicety; never fail a recorded SMS over it.
-    const summary = await monthLine(tx).catch((error: unknown) => {
+    const summary = await monthLine(db, tx).catch((error: unknown) => {
       console.error("[wallet] sms summary failed:", error);
       return null;
     });

@@ -1,22 +1,42 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
-import { SESSION_COOKIE, getPasscode, isValidSession } from "@/lib/auth";
+import { authKeys, isPublicPath } from "@/lib/auth";
 
+/** Refreshes the Supabase session cookies on every request and sends signed-out visitors to /login. */
 export async function middleware(request: NextRequest) {
-  // /api/sms authenticates with its own bearer token.
   const { pathname } = request.nextUrl;
-  if (!getPasscode() || pathname.startsWith("/unlock") || pathname === "/api/sms") {
-    return NextResponse.next();
-  }
+  if (pathname === "/api/sms") return NextResponse.next();
 
-  if (await isValidSession(request.cookies.get(SESSION_COOKIE)?.value)) {
-    return NextResponse.next();
-  }
+  let response = NextResponse.next({ request });
+  const { url, key } = authKeys();
+  const supabase = createServerClient(url, key, {
+    cookies: {
+      getAll: () => request.cookies.getAll(),
+      setAll: (list) => {
+        for (const { name, value } of list) request.cookies.set(name, value);
+        response = NextResponse.next({ request });
+        for (const { name, value, options } of list) response.cookies.set(name, value, options);
+      },
+    },
+  });
 
+  const { data } = await supabase.auth.getClaims();
+  const signedIn = Boolean(data?.claims?.sub);
+
+  if (!signedIn && !isPublicPath(pathname)) return redirectTo(request, response, "/login");
+  if (signedIn && pathname === "/login") return redirectTo(request, response, "/");
+  return response;
+}
+
+/** Redirects while keeping any refreshed session cookies. */
+function redirectTo(request: NextRequest, response: NextResponse, pathname: string) {
   const url = request.nextUrl.clone();
-  url.pathname = "/unlock";
+  url.pathname = pathname;
   url.search = "";
-  return NextResponse.redirect(url);
+  const redirect = NextResponse.redirect(url);
+  for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
+  return redirect;
 }
 
 export const config = {
