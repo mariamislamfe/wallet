@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useOptimistic, useState, useTransition } from "react";
+import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import { WalletMinimal } from "lucide-react";
 
 import {
@@ -132,11 +133,15 @@ export function Dashboard({
   const [loadFailed, setLoadFailed] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [tab, setTab] = useState<Tab>("home");
+  // -1 / 1: which way the page slides when switching tabs (by their order in the bar).
+  const [pageDirection, setPageDirection] = useState(0);
+  const reduceMotion = useReducedMotion();
 
   // The open tab lives in the URL hash so a reload or the back button keeps it.
   useEffect(() => {
     const fromHash = () => {
       const hash = window.location.hash.slice(1);
+      setPageDirection(0);
       setTab((TABS as readonly string[]).includes(hash) ? (hash as Tab) : "home");
     };
     fromHash();
@@ -145,7 +150,10 @@ export function Dashboard({
   }, []);
 
   const openTab = useCallback((next: Tab) => {
-    setTab(next);
+    setTab((current) => {
+      setPageDirection(Math.sign(TABS.indexOf(next) - TABS.indexOf(current)));
+      return next;
+    });
     const url = next === "home" ? window.location.pathname + window.location.search : `#${next}`;
     window.history.replaceState(null, "", url);
     window.scrollTo({ top: 0 });
@@ -433,6 +441,13 @@ export function Dashboard({
     onSetInPlan: handleSetInPlan,
     onSetProject: handleSetProject,
   };
+  const slide = reduceMotion ? 0 : 24;
+  const pageVariants: Variants = {
+    enter: (direction: number) => ({ opacity: 0, x: direction * slide }),
+    center: { opacity: 1, x: 0, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } },
+    exit: (direction: number) => ({ opacity: 0, x: direction * -slide, transition: { duration: 0.12, ease: "easeIn" } }),
+  };
+
   const monthPageProps = {
     offset: monthOffset,
     maxOffset: oldestOffset,
@@ -452,123 +467,134 @@ export function Dashboard({
           <Ar className="text-sm text-neutral-400">محفظتي</Ar>
         </header>
 
-        {tab === "home" && (
-          <>
-            <BalanceOverview
-              balances={view.balances}
-              reserved={currentPlan?.reserved ?? null}
-              showSetupHint={isFresh}
-              onSetBalance={handleSetBalance}
-            />
-
-            <QuickEntry
-              balances={view.balances}
-              transactions={view.transactions}
-              budgets={budgets}
-              projects={projects}
-              onSubmit={handleAdd}
-            />
-
-            {budgets.length > 0 && (
-              <PendingIncome
-                transactions={undecided}
-                budgets={budgets}
-                pendingIds={pendingIds}
-                onDecide={handleSetInPlan}
-              />
-            )}
-
-            {currentPlan && <BillsCard plan={currentPlan} balance={balance} onOpen={() => openTab("pockets")} />}
-
-            <section aria-labelledby="recent-heading" className="mt-10">
-              <div className="mb-2 flex items-center justify-between gap-3 px-1">
-                <h2 id="recent-heading" className="text-[13px] font-medium text-neutral-500">
-                  Recent <span aria-hidden className="mx-1 text-neutral-300 dark:text-neutral-600">·</span>
-                  <Ar className="font-normal text-neutral-400">آخر الحركات</Ar>
-                </h2>
-                {view.transactions.length > RECENT_COUNT && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      changeMonth(0);
-                      openTab("activity");
-                    }}
-                    className="-me-2 h-8 rounded-full px-3 text-[13px] font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-                  >
-                    See all
-                  </button>
-                )}
-              </div>
-              {!mounted ? (
-                <FeedSkeleton />
-              ) : view.transactions.length === 0 ? (
-                <EmptyState en="Nothing logged yet" ar="لسه مفيش حركات" />
-              ) : (
-                <ActivityFeed transactions={view.transactions.slice(0, RECENT_COUNT)} {...feedProps} />
-              )}
-            </section>
-          </>
-        )}
-
-        {tab === "activity" && (
-          <MonthPage
-            {...monthPageProps}
-            skeleton={
-              <>
-                <SummarySkeleton />
-                <div className="mt-8">
-                  <FeedSkeleton />
-                </div>
-              </>
-            }
+        <AnimatePresence mode="wait" initial={false} custom={pageDirection}>
+          <motion.div
+            key={tab}
+            custom={pageDirection}
+            variants={pageVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
           >
-            {months && (
+            {tab === "home" && (
               <>
-                <MonthSummary totals={totalsFor(months.selected.rows)} />
-                <div className="mt-8">
-                  {months.selected.rows.length === 0 ? (
-                    <EmptyState
-                      en={monthOffset === 0 ? "Nothing logged this month yet" : "Nothing logged this month"}
-                      ar="مفيش حركات في الشهر ده"
-                    />
+                <BalanceOverview
+                  balances={view.balances}
+                  reserved={currentPlan?.reserved ?? null}
+                  showSetupHint={isFresh}
+                  onSetBalance={handleSetBalance}
+                />
+
+                <QuickEntry
+                  balances={view.balances}
+                  transactions={view.transactions}
+                  budgets={budgets}
+                  projects={projects}
+                  onSubmit={handleAdd}
+                />
+
+                {budgets.length > 0 && (
+                  <PendingIncome
+                    transactions={undecided}
+                    budgets={budgets}
+                    pendingIds={pendingIds}
+                    onDecide={handleSetInPlan}
+                  />
+                )}
+
+                {currentPlan && <BillsCard plan={currentPlan} balance={balance} onOpen={() => openTab("pockets")} />}
+
+                <section aria-labelledby="recent-heading" className="mt-10">
+                  <div className="mb-2 flex items-center justify-between gap-3 px-1">
+                    <h2 id="recent-heading" className="text-[13px] font-medium text-neutral-500">
+                      Recent <span aria-hidden className="mx-1 text-neutral-300 dark:text-neutral-600">·</span>
+                      <Ar className="font-normal text-neutral-400">آخر الحركات</Ar>
+                    </h2>
+                    {view.transactions.length > RECENT_COUNT && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          changeMonth(0);
+                          openTab("activity");
+                        }}
+                        className="-me-2 h-8 rounded-full px-3 text-[13px] font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+                      >
+                        See all
+                      </button>
+                    )}
+                  </div>
+                  {!mounted ? (
+                    <FeedSkeleton />
+                  ) : view.transactions.length === 0 ? (
+                    <EmptyState en="Nothing logged yet" ar="لسه مفيش حركات" />
                   ) : (
-                    <ActivityFeed transactions={months.selected.rows} {...feedProps} />
+                    <ActivityFeed transactions={view.transactions.slice(0, RECENT_COUNT)} {...feedProps} />
                   )}
-                </div>
+                </section>
               </>
             )}
-          </MonthPage>
-        )}
 
-        {tab === "pockets" && (
-          <section aria-label="Pockets">
-            {budgets.length > 0 && (
-              <PendingIncome
-                transactions={undecided}
-                budgets={budgets}
-                pendingIds={pendingIds}
-                onDecide={handleSetInPlan}
-              />
+            {tab === "activity" && (
+              <MonthPage
+                {...monthPageProps}
+                skeleton={
+                  <>
+                    <SummarySkeleton />
+                    <div className="mt-8">
+                      <FeedSkeleton />
+                    </div>
+                  </>
+                }
+              >
+                {months && (
+                  <>
+                    <MonthSummary totals={totalsFor(months.selected.rows)} />
+                    <div className="mt-8">
+                      {months.selected.rows.length === 0 ? (
+                        <EmptyState
+                          en={monthOffset === 0 ? "Nothing logged this month yet" : "Nothing logged this month"}
+                          ar="مفيش حركات في الشهر ده"
+                        />
+                      ) : (
+                        <ActivityFeed transactions={months.selected.rows} {...feedProps} />
+                      )}
+                    </div>
+                  </>
+                )}
+              </MonthPage>
             )}
-            {currentPlan ? (
-              <BudgetPlan plan={currentPlan} budgets={budgets} balance={balance} onSave={handleSaveBudgets} />
-            ) : (
-              <SummarySkeleton />
-            )}
-          </section>
-        )}
 
-        {tab === "projects" && (
-          <MonthPage {...monthPageProps} skeleton={<SummarySkeleton />}>
-            {months && (
-              <ProjectsCard
-                totals={projectTotals(projects, months.selected.rows, months.projectRows)}
-                projects={projects}
-                onSave={handleSaveProjects}
-              />
+            {tab === "pockets" && (
+              <section aria-label="Pockets">
+                {budgets.length > 0 && (
+                  <PendingIncome
+                    transactions={undecided}
+                    budgets={budgets}
+                    pendingIds={pendingIds}
+                    onDecide={handleSetInPlan}
+                  />
+                )}
+                {currentPlan ? (
+                  <BudgetPlan plan={currentPlan} budgets={budgets} balance={balance} onSave={handleSaveBudgets} />
+                ) : (
+                  <SummarySkeleton />
+                )}
+              </section>
             )}
-          </MonthPage>
-        )}
+
+            {tab === "projects" && (
+              <MonthPage {...monthPageProps} skeleton={<SummarySkeleton />}>
+                {months && (
+                  <ProjectsCard
+                    totals={projectTotals(projects, months.selected.rows, months.projectRows)}
+                    projects={projects}
+                    onSave={handleSaveProjects}
+                  />
+                )}
+              </MonthPage>
+            )}
+          </motion.div>
+        </AnimatePresence>
       </main>
 
       <TabBar tab={tab} onChange={openTab} dots={undecided.length > 0 && budgets.length > 0 ? POCKETS_DOT : undefined} />
