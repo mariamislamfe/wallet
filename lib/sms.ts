@@ -47,6 +47,21 @@ const MERCHANT = [
   /(?:^|\s)(?:لدى|لدي|عند|لصالح)\s+(.+?)(?=\s+(?:في|بتاريخ|يوم|بتوقيت|الرصيد|المتاح|رصيد)(?:\s|$)|\s*[.،,;]\s|\s*[.،,;]?$)/,
 ];
 
+// "… إلى نهي م** ع*** ا** رقم مرجعي …" / "… from Mona on …": the other side of a transfer.
+const STOP = String.raw`(?=\s+(?:رقم|مرجعي|بتاريخ|يوم|الساعه|الساعة|في|عبر|ref|reference|on|via|dated|date)(?:\s|$)|\s*[.،,;]\s|\s*[.،,;]?$)`;
+const COUNTERPARTY: Record<TransactionType, RegExp> = {
+  expense: new RegExp(String.raw`(?:^|\s)(?:إلى|الى|to)\s+(.+?)` + STOP, "i"),
+  income: new RegExp(String.raw`(?:^|\s)(?:من|from)\s+(.+?)` + STOP, "i"),
+};
+
+/** The counterparty's name without the bank's masked parts ("نهي م** ع***" → "نهي"). */
+function findCounterparty(text: string, type: TransactionType): string | null {
+  const words = (COUNTERPARTY[type].exec(text)?.[1] ?? "")
+    .split(" ")
+    .filter((word) => word && !word.includes("*") && !/\d/.test(word));
+  return words.length > 0 && !/^(?:حساب|بطاق|your)/i.test(words[0]!) ? words.join(" ").slice(0, 40) : null;
+}
+
 function normalise(text: string): string {
   return text
     .replace(ARABIC_DIGITS, (d) => String(d.charCodeAt(0) & 0xf))
@@ -98,6 +113,10 @@ export function parseBankSms(raw: string): ParsedSms {
   const type: TransactionType | null = INCOME.test(text) ? "income" : EXPENSE.test(text) ? "expense" : null;
   if (!type) return { ok: false, reason: "not a card transaction" };
 
-  const merchant = findMerchant(text) ?? (TRANSFER.test(text) ? "InstaPay transfer" : null);
+  let merchant = findMerchant(text);
+  if (!merchant && TRANSFER.test(text)) {
+    const counterparty = findCounterparty(text, type);
+    merchant = counterparty ? `InstaPay · ${counterparty}` : "InstaPay transfer";
+  }
   return { ok: true, type, amount, merchant };
 }
