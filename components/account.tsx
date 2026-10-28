@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, Copy, LogOut, MessageSquareText } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, LogOut, MessageSquareText } from "lucide-react";
 
 import { createSmsToken, signOut } from "@/app/actions";
 import { Ar } from "@/components/ar";
+import { CopyField } from "@/components/copy-field";
 import { Sheet } from "@/components/sheet";
 import { cn } from "@/lib/client";
 
@@ -30,7 +32,6 @@ export function AccountSheet({ account, onClose }: Props) {
   const [connected, setConnected] = useState(account.smsConnected);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<"token" | "url" | null>(null);
   const [pending, startTransition] = useTransition();
   const [signingOut, startSignOut] = useTransition();
   const endpoint = typeof window === "undefined" ? "/api/sms" : `${window.location.origin}/api/sms`;
@@ -46,16 +47,6 @@ export function AccountSheet({ account, onClose }: Props) {
       setToken(result.data);
       setConnected(true);
     });
-
-  const copy = async (what: "token" | "url", text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(what);
-      window.setTimeout(() => setCopied(null), 1600);
-    } catch {
-      setError("Couldn't copy. Press and hold the text to copy it.");
-    }
-  };
 
   return (
     <Sheet
@@ -105,8 +96,8 @@ export function AccountSheet({ account, onClose }: Props) {
 
         {token ? (
           <div className="mt-4 space-y-3">
-            <CopyRow label="Token" value={token} copied={copied === "token"} onCopy={() => copy("token", token)} />
-            <CopyRow label="URL" value={endpoint} copied={copied === "url"} onCopy={() => copy("url", endpoint)} />
+            <CopyField label="Token" value={token} />
+            <CopyField label="URL" value={endpoint} />
             <p className="text-[13px] leading-relaxed text-neutral-500">
               In the Shortcut&apos;s <b className="font-medium text-neutral-700 dark:text-neutral-300">Get Contents of URL</b>
               , add one header: <span className="font-mono text-[12px]">Authorization</span> →{" "}
@@ -137,27 +128,16 @@ export function AccountSheet({ account, onClose }: Props) {
             {error}
           </p>
         )}
+
+        <Link
+          href="/guide"
+          target="_blank"
+          className="mt-3 flex h-10 items-center justify-center gap-1.5 rounded-xl text-[13px] font-medium text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+        >
+          Step-by-step setup <Ar className="text-neutral-400">الخطوات</Ar>
+          <ArrowUpRight className="size-3.5" strokeWidth={1.75} />
+        </Link>
       </section>
     </Sheet>
-  );
-}
-
-function CopyRow({ label, value, copied, onCopy }: { label: string; value: string; copied: boolean; onCopy: () => void }) {
-  return (
-    <div>
-      <p className="mb-1 text-[11px] font-medium tracking-wide text-neutral-400 uppercase">{label}</p>
-      <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 py-1.5 ps-3 pe-1.5 dark:border-neutral-800 dark:bg-neutral-800/50">
-        <code className="min-w-0 flex-1 truncate font-mono text-[13px] select-all">{value}</code>
-        <button
-          type="button"
-          onClick={onCopy}
-          aria-label={`Copy ${label.toLowerCase()}`}
-          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-white px-2.5 text-[12px] font-medium shadow-sm transition active:scale-95 dark:bg-neutral-900"
-        >
-          {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-    </div>
   );
 }

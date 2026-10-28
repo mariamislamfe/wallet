@@ -1,8 +1,8 @@
 // Shared by middleware (Edge runtime) and the server, so no Node-only imports.
 
-/** Paths that work without signing in. /api/sms authenticates with its own bearer token. */
+/** Paths that work without signing in. /api/sms authenticates with its own bearer token; /guide is shareable. */
 export function isPublicPath(pathname: string): boolean {
-  return pathname === "/login" || pathname.startsWith("/auth/") || pathname === "/api/sms";
+  return pathname === "/login" || pathname === "/guide" || pathname.startsWith("/auth/") || pathname === "/api/sms";
 }
 
 /** URL and publishable (anon) key for acting as the signed-in user. */
