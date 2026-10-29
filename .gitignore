@@ -5,3 +5,9 @@ out
 *.tsbuildinfo
 next-env.d.ts
 .vercel
+
+# Private / local files
+.env
+CLAUDE.md
+AGENTS.md
+.claude/
